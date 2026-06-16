@@ -1,0 +1,134 @@
+name: Test basic usage - console format
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install mock agentshield and mock curl
+        shell: bash
+        run: |
+          # Create a mock agentshield binary that simulates a successful scan
+          cat > /tmp/mock-agentshield.sh << 'MOCKEOF'
+          #!/bin/bash
+          FORMAT="console"
+          OUTPUT=""
+          EXIT_CODE=0
+          while [[ $# -gt 0 ]]; do
+            case "$1" in
+              --format) FORMAT="$2"; shift 2 ;;
+              --output) OUTPUT="$2"; shift 2 ;;
+              --fail-on|--config) shift 2 ;;
+              --ignore-tests) shift ;;
+              scan) shift ;;
+              *) shift ;;
+            esac
+          done
+          if [ "$FORMAT" = "sarif" ] && [ -n "$OUTPUT" ]; then
+            printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"AgentShield","rules":[]}},"results":[]}]}\n' > "$OUTPUT"
+          fi
+          echo "AgentShield scan complete. No findings."
+          exit $EXIT_CODE
+          MOCKEOF
+          chmod +x /tmp/mock-agentshield.sh
+
+          # Create a tar.gz containing the mock binary named 'agentshield'
+          mkdir -p /tmp/agentshield-pkg
+          cp /tmp/mock-agentshield.sh /tmp/agentshield-pkg/agentshield
+          chmod +x /tmp/agentshield-pkg/agentshield
+          tar czf /tmp/agentshield-mock.tar.gz -C /tmp/agentshield-pkg agentshield
+
+          # Create a mock curl wrapper that intercepts agentshield-related URLs
+          REAL_CURL=$(which curl)
+          cat > /usr/local/bin/curl << CURLEOF
+          #!/bin/bash
+          # Collect all args to find the URL
+          ALL_ARGS=("\$@")
+          URL=""
+          OUTPUT_FILE=""
+          i=0
+          while [ \$i -lt \${#ALL_ARGS[@]} ]; do
+            arg="\${ALL_ARGS[\$i]}"
+            case "\$arg" in
+              -o|--output)
+                i=\$((i+1))
+                OUTPUT_FILE="\${ALL_ARGS[\$i]}"
+                ;;
+              http*agentshield*|http*limaronaldo*)
+                URL="\$arg"
+                ;;
+              http*api.github.com*agentshield*|http*api.github.com*limaronaldo*)
+                URL="\$arg"
+                ;;
+            esac
+            i=\$((i+1))
+          done
+
+          # Check last non-flag arg as URL if not found yet
+          if [ -z "\$URL" ]; then
+            for arg in "\${ALL_ARGS[@]}"; do
+              if echo "\$arg" | grep -q "^http"; then
+                URL="\$arg"
+              fi
+            done
+          fi
+
+          if echo "\$URL" | grep -q "api.github.com"; then
+            echo '{"tag_name":"v0.1.0","name":"v0.1.0"}'
+            exit 0
+          elif echo "\$URL" | grep -qE "(agentshield|limaronaldo)"; then
+            if [ -n "\$OUTPUT_FILE" ]; then
+              cp /tmp/agentshield-mock.tar.gz "\$OUTPUT_FILE"
+            else
+              cat /tmp/agentshield-mock.tar.gz
+            fi
+            exit 0
+          else
+            exec $REAL_CURL "\$@"
+          fi
+          CURLEOF
+          chmod +x /usr/local/bin/curl
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          format: 'console'
+          fail-on: 'critical'
+          upload-sarif: 'false'
+        continue-on-error: true
+
+      - name: Assert exit-code output is set
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ -z "$EXIT_CODE" ]; then
+            echo "FAIL: exit-code output was not set"
+            exit 1
+          fi
+          echo "PASS: exit-code is '$EXIT_CODE'"
+
+      - name: Assert finding-count output is set
+        env:
+          FINDING_COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $FINDING_COUNT"
+          if [ -z "$FINDING_COUNT" ]; then
+            echo "FAIL: finding-count output was not set"
+            exit 1
+          fi
+          echo "PASS: finding-count is '$FINDING_COUNT'"
+
+      - name: Assert exit-code is valid (0 or 1)
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ] && [ "$EXIT_CODE" != "1" ]; then
+            echo "FAIL: expected exit-code to be 0 or 1, got '$EXIT_CODE'"
+            exit 1
+          fi
+          echo "PASS: exit-code '$EXIT_CODE' is valid"

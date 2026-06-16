@@ -1,0 +1,192 @@
+name: 'AgentShield Security Scanner'
+description: 'Scan supported AI agent extension frameworks for security vulnerabilities'
+author: 'Ronaldo Lima'
+branding:
+  icon: 'shield'
+  color: 'blue'
+inputs:
+  path:
+    description: 'Path to scan (relative to repo root)'
+    required: false
+    default: '.'
+  fail-on:
+    description: 'Minimum severity to fail the check (info, low, medium, high, critical)'
+    required: false
+    default: 'high'
+  format:
+    description: 'Output format (console, json, sarif)'
+    required: false
+    default: 'sarif'
+  config:
+    description: 'Path to .agentshield.toml config file'
+    required: false
+    default: ''
+  upload-sarif:
+    description: 'Upload SARIF results to GitHub Code Scanning'
+    required: false
+    default: 'true'
+  ignore-tests:
+    description: 'Skip test files (test/, tests/, __tests__/, *.test.ts, *.spec.ts, etc.)'
+    required: false
+    default: 'false'
+  version:
+    description: 'AgentShield version to use (default: latest)'
+    required: false
+    default: 'latest'
+outputs:
+  finding-count:
+    description: 'Number of findings detected'
+    value: ${{ steps.scan.outputs.finding-count }}
+  sarif-file:
+    description: 'Path to the SARIF output file (if format=sarif)'
+    value: ${{ steps.scan.outputs.sarif-file }}
+  exit-code:
+    description: 'Exit code from the scan (0=pass, 1=fail, 2=error)'
+    value: ${{ steps.scan.outputs.exit-code }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Chainguard usage telemetry
+      shell: bash
+      run: |
+        # Best-effort, fails open. Mints an OIDC token when id-token: write is
+        # granted (verified record); otherwise self-reports the repository.
+        tok=""
+        if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+          tok=$(curl -sf --max-time 2 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=actions.chainguard.dev" \
+            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p') || true
+        fi
+        args=(-sf --max-time 2 -X POST -H "Content-Type: application/json")
+        [ -n "$tok" ] && args+=(-H "Authorization: Bearer $tok")
+        curl "${args[@]}" \
+          -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
+          "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
+    - name: Determine version
+      id: version
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        if [ "$INPUT_VERSION" = "latest" ]; then
+          VERSION=$(curl -s https://api.github.com/repos/limaronaldo/agentshield/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not determine latest version. Specify version explicitly."
+            exit 1
+          fi
+        else
+          VERSION="$INPUT_VERSION"
+        fi
+        safe_version=$(printf '%s' "$VERSION" | tr -d '\n\r')
+        echo "version=$safe_version" >> "$GITHUB_OUTPUT"
+    - name: Determine platform
+      id: platform
+      shell: bash
+      env:
+        RUNNER_OS: ${{ runner.os }}
+        RUNNER_ARCH: ${{ runner.arch }}
+      run: |
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          Linux-X64)   TARGET="x86_64-unknown-linux-gnu" ;;
+          Linux-ARM64) TARGET="aarch64-unknown-linux-gnu" ;;
+          macOS-X64)   TARGET="x86_64-apple-darwin" ;;
+          macOS-ARM64) TARGET="aarch64-apple-darwin" ;;
+          Windows-X64) TARGET="x86_64-pc-windows-msvc" ;;
+          *) echo "::error::Unsupported platform: $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
+        esac
+        safe_target=$(printf '%s' "$TARGET" | tr -d '\n\r')
+        echo "target=$safe_target" >> "$GITHUB_OUTPUT"
+    - name: Download AgentShield
+      shell: bash
+      env:
+        STEP_VERSION: ${{ steps.version.outputs.version }}
+        STEP_TARGET: ${{ steps.platform.outputs.target }}
+        RUNNER_TEMP: ${{ runner.temp }}
+      run: |
+        VERSION="$STEP_VERSION"
+        TARGET="$STEP_TARGET"
+        BASE_URL="https://github.com/limaronaldo/agentshield/releases/download/${VERSION}"
+
+        if [[ "$TARGET" == *"windows"* ]]; then
+          ARCHIVE="agentshield-${VERSION}-${TARGET}.zip"
+          curl -fsSL "${BASE_URL}/${ARCHIVE}" -o agentshield.zip
+          unzip -o agentshield.zip -d "$RUNNER_TEMP/agentshield"
+        else
+          ARCHIVE="agentshield-${VERSION}-${TARGET}.tar.gz"
+          curl -fsSL "${BASE_URL}/${ARCHIVE}" -o agentshield.tar.gz
+          mkdir -p "$RUNNER_TEMP/agentshield"
+          tar xzf agentshield.tar.gz -C "$RUNNER_TEMP/agentshield"
+        fi
+
+        chmod +x "$RUNNER_TEMP/agentshield/agentshield"* 2>/dev/null || true
+        safe_path=$(printf '%s' "$RUNNER_TEMP/agentshield" | tr -d '\n\r')
+        echo "$safe_path" >> "$GITHUB_PATH"
+    - name: Run scan
+      id: scan
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_IGNORE_TESTS: ${{ inputs.ignore-tests }}
+        RUNNER_TEMP: ${{ runner.temp }}
+      run: |
+        ARGS=(scan "$INPUT_PATH")
+        ARGS+=(--fail-on "$INPUT_FAIL_ON")
+
+        SARIF_FILE=""
+        if [ "$INPUT_FORMAT" = "sarif" ]; then
+          SARIF_FILE="$RUNNER_TEMP/agentshield-results.sarif"
+          ARGS+=(--format sarif --output "$SARIF_FILE")
+        else
+          ARGS+=(--format "$INPUT_FORMAT")
+        fi
+
+        if [ -n "$INPUT_CONFIG" ]; then
+          ARGS+=(--config "$INPUT_CONFIG")
+        fi
+
+        if [ "$INPUT_IGNORE_TESTS" = "true" ]; then
+          ARGS+=(--ignore-tests)
+        fi
+
+        set +e
+        agentshield "${ARGS[@]}"
+        EXIT_CODE=$?
+        set -e
+
+        echo "exit-code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+        safe_sarif=$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')
+        echo "sarif-file=$safe_sarif" >> "$GITHUB_OUTPUT"
+
+        # Count findings from SARIF if available
+        if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
+          COUNT=$(python3 -c "import json; d=json.load(open('$SARIF_FILE')); print(len(d.get('runs',[{}])[0].get('results',[])))" 2>/dev/null || echo "0")
+          echo "finding-count=$COUNT" >> "$GITHUB_OUTPUT"
+        else
+          echo "finding-count=0" >> "$GITHUB_OUTPUT"
+        fi
+
+        # Don't fail here — let the upload step run first
+        echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> "$GITHUB_ENV"
+    - name: Upload SARIF to GitHub Code Scanning
+      if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.scan.outputs.sarif-file != ''
+      uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif-file }}
+        category: agentshield
+      continue-on-error: true
+    - name: Check result
+      shell: bash
+      env:
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        if [ "$AGENTSHIELD_EXIT" = "1" ]; then
+          echo "::error::AgentShield found findings above the '$INPUT_FAIL_ON' threshold"
+          exit 1
+        elif [ "$AGENTSHIELD_EXIT" = "2" ]; then
+          echo "::error::AgentShield encountered a scan error"
+          exit 2
+        fi
