@@ -8,6 +8,7 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 
 | Version | Tag | Upstream commit |
 |---------|-----|-----------------|
+| v0.8.6 | [`v0.8.6`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.6) | [`b8de02a`](https://github.com/aiconnai/agentshield/commit/b8de02a7182892028df56f65552674a0497e212e) |
 | v0.8.7 | [`v0.8.7`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.7) | [`a1a5711`](https://github.com/aiconnai/agentshield/commit/a1a571197211793422d31811be3d7735dae0a30a) |
 
 ## Privacy
