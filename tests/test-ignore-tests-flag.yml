@@ -1,0 +1,72 @@
+name: Test ignore-tests flag
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create mock agentshield binary (checks for --ignore-tests flag)
+        run: |
+          MOCK_BIN="$RUNNER_TEMP/mock-agentshield"
+          cat > "$MOCK_BIN" << 'EOF'
+          #!/usr/bin/env bash
+          # Mock agentshield: checks that --ignore-tests was passed
+          FOUND_IGNORE_TESTS=0
+          OUTPUT_FILE=""
+          while [[ $# -gt 0 ]]; do
+            if [[ "$1" == "--ignore-tests" ]]; then
+              FOUND_IGNORE_TESTS=1
+              shift
+            elif [[ "$1" == "--output" ]]; then
+              OUTPUT_FILE="$2"
+              shift 2
+            else
+              shift
+            fi
+          done
+          if [ "$FOUND_IGNORE_TESTS" != "1" ]; then
+            echo "ERROR: --ignore-tests flag was not passed to agentshield"
+            exit 2
+          fi
+          if [ -n "$OUTPUT_FILE" ]; then
+            cat > "$OUTPUT_FILE" << 'SARIF'
+          {
+            "version": "2.1.0",
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "runs": [
+              {
+                "tool": {"driver": {"name": "AgentShield", "rules": []}},
+                "results": []
+              }
+            ]
+          }
+          SARIF
+          fi
+          exit 0
+          EOF
+          chmod +x "$MOCK_BIN"
+          echo "MOCK_BIN=$MOCK_BIN" >> $GITHUB_ENV
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          fail-on: 'high'
+          format: 'sarif'
+          upload-sarif: 'false'
+          ignore-tests: 'true'
+          binary-path: ${{ env.MOCK_BIN }}
+
+      - name: Assert exit-code is 0 (ignore-tests flag accepted)
+        env:
+          ACTUAL: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "actual exit-code: $ACTUAL"
+          if [ "$ACTUAL" != "0" ]; then
+            echo "FAIL: expected exit-code '0', got '$ACTUAL' (--ignore-tests may not have been passed)"
+            exit 1
+          fi
+          echo "PASS"

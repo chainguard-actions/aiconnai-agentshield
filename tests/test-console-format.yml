@@ -1,0 +1,63 @@
+name: Test console format output
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create mock agentshield binary (console format, clean)
+        run: |
+          MOCK_BIN="$RUNNER_TEMP/mock-agentshield"
+          cat > "$MOCK_BIN" << 'EOF'
+          #!/usr/bin/env bash
+          # Mock agentshield: exits 0, prints console output
+          echo "AgentShield scan complete. No findings."
+          exit 0
+          EOF
+          chmod +x "$MOCK_BIN"
+          echo "MOCK_BIN=$MOCK_BIN" >> $GITHUB_ENV
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          fail-on: 'medium'
+          format: 'console'
+          upload-sarif: 'false'
+          binary-path: ${{ env.MOCK_BIN }}
+
+      - name: Assert exit-code is 0
+        env:
+          ACTUAL: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "actual exit-code: $ACTUAL"
+          if [ "$ACTUAL" != "0" ]; then
+            echo "FAIL: expected exit-code '0', got '$ACTUAL'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert finding-count is 0 (no SARIF file)
+        env:
+          ACTUAL: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "actual finding-count: $ACTUAL"
+          if [ "$ACTUAL" != "0" ]; then
+            echo "FAIL: expected finding-count '0', got '$ACTUAL'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert sarif-file is empty for console format
+        env:
+          ACTUAL: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "actual sarif-file: '$ACTUAL'"
+          if [ -n "$ACTUAL" ]; then
+            echo "FAIL: expected sarif-file to be empty for console format, got '$ACTUAL'"
+            exit 1
+          fi
+          echo "PASS"

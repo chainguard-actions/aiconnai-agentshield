@@ -1,0 +1,79 @@
+name: Test scan with findings detected
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create mock agentshield binary (findings found)
+        run: |
+          MOCK_BIN="$RUNNER_TEMP/mock-agentshield"
+          cat > "$MOCK_BIN" << 'EOF'
+          #!/usr/bin/env bash
+          # Mock agentshield: exits 1 (findings above threshold)
+          # If --output is passed, write a SARIF file with 2 findings
+          OUTPUT_FILE=""
+          while [[ $# -gt 0 ]]; do
+            if [[ "$1" == "--output" ]]; then
+              OUTPUT_FILE="$2"
+              shift 2
+            else
+              shift
+            fi
+          done
+          if [ -n "$OUTPUT_FILE" ]; then
+            cat > "$OUTPUT_FILE" << 'SARIF'
+          {
+            "version": "2.1.0",
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "runs": [
+              {
+                "tool": {"driver": {"name": "AgentShield", "rules": []}},
+                "results": [
+                  {"ruleId": "AS001", "message": {"text": "High severity finding 1"}},
+                  {"ruleId": "AS002", "message": {"text": "High severity finding 2"}}
+                ]
+              }
+            ]
+          }
+          SARIF
+          fi
+          exit 1
+          EOF
+          chmod +x "$MOCK_BIN"
+          echo "MOCK_BIN=$MOCK_BIN" >> $GITHUB_ENV
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          fail-on: 'high'
+          format: 'sarif'
+          upload-sarif: 'false'
+          binary-path: ${{ env.MOCK_BIN }}
+        continue-on-error: true
+
+      - name: Assert exit-code is 1
+        env:
+          ACTUAL: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "actual exit-code: $ACTUAL"
+          if [ "$ACTUAL" != "1" ]; then
+            echo "FAIL: expected exit-code '1', got '$ACTUAL'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert finding-count is 2
+        env:
+          ACTUAL: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "actual finding-count: $ACTUAL"
+          if [ "$ACTUAL" != "2" ]; then
+            echo "FAIL: expected finding-count '2', got '$ACTUAL'"
+            exit 1
+          fi
+          echo "PASS"
