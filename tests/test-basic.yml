@@ -1,0 +1,107 @@
+name: Test basic scan (sarif format, no upload)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install mock agentshield binary and curl wrapper
+        shell: bash
+        run: |
+          set -e
+
+          # Create mock agentshield binary directory (matches what action creates)
+          MOCK_DIR="$RUNNER_TEMP/agentshield"
+          mkdir -p "$MOCK_DIR"
+
+          # Write mock agentshield binary using printf to avoid heredoc indentation issues
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'OUTPUT_FILE=""' \
+            'FORMAT="console"' \
+            'i=1' \
+            'while [ $i -le $# ]; do' \
+            '  arg="${!i}"' \
+            '  if [ "$arg" = "--output" ]; then i=$((i+1)); OUTPUT_FILE="${!i}"; fi' \
+            '  if [ "$arg" = "--format" ]; then i=$((i+1)); FORMAT="${!i}"; fi' \
+            '  i=$((i+1))' \
+            'done' \
+            'if [ "$FORMAT" = "sarif" ] && [ -n "$OUTPUT_FILE" ]; then' \
+            '  echo "{\"version\":\"2.1.0\",\"runs\":[{\"results\":[],\"tool\":{\"driver\":{\"name\":\"agentshield\",\"rules\":[]}}}]}" > "$OUTPUT_FILE"' \
+            'fi' \
+            'exit 0' \
+            > "$MOCK_DIR/agentshield"
+          chmod +x "$MOCK_DIR/agentshield"
+
+          # Package mock binary into a tar.gz that the action will "download"
+          tar czf "$RUNNER_TEMP/agentshield.tar.gz" -C "$MOCK_DIR" agentshield
+
+          # Write a curl wrapper that intercepts agentshield archive downloads
+          mkdir -p "$HOME/.local/bin"
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'OUTPUT_FILE=""' \
+            'URL=""' \
+            'args=("$@")' \
+            'i=0' \
+            'while [ $i -lt ${#args[@]} ]; do' \
+            '  case "${args[$i]}" in' \
+            '    -o) i=$((i+1)); OUTPUT_FILE="${args[$i]}" ;;' \
+            '    http*) URL="${args[$i]}" ;;' \
+            '  esac' \
+            '  i=$((i+1))' \
+            'done' \
+            'if [[ "$URL" == *"agentshield"* ]] && [ -n "$OUTPUT_FILE" ]; then' \
+            '  cp "$RUNNER_TEMP/agentshield.tar.gz" "$OUTPUT_FILE"' \
+            '  exit 0' \
+            'fi' \
+            'exec /usr/bin/curl "$@"' \
+            > "$HOME/.local/bin/curl"
+          chmod +x "$HOME/.local/bin/curl"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          format: 'sarif'
+          fail-on: 'critical'
+          upload-sarif: 'false'
+          ignore-tests: 'false'
+          version: 'v0.1.0'
+        continue-on-error: true
+
+      - name: Assert exit-code output is set
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ -z "$EXIT_CODE" ]; then
+            echo "FAIL: exit-code output was not set"
+            exit 1
+          fi
+          echo "PASS: exit-code is '$EXIT_CODE'"
+
+      - name: Assert finding-count output is set
+        env:
+          FINDING_COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $FINDING_COUNT"
+          if [ -z "$FINDING_COUNT" ]; then
+            echo "FAIL: finding-count output was not set"
+            exit 1
+          fi
+          echo "PASS: finding-count is '$FINDING_COUNT'"
+
+      - name: Assert sarif-file output is set
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "sarif-file: $SARIF_FILE"
+          if [ -z "$SARIF_FILE" ]; then
+            echo "FAIL: sarif-file output was not set"
+            exit 1
+          fi
+          echo "PASS: sarif-file is '$SARIF_FILE'"

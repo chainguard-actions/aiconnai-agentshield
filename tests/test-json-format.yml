@@ -1,0 +1,90 @@
+name: Test scan with JSON format
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install mock agentshield binary and curl wrapper
+        shell: bash
+        run: |
+          set -e
+
+          MOCK_DIR="$RUNNER_TEMP/agentshield"
+          mkdir -p "$MOCK_DIR"
+
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'exit 0' \
+            > "$MOCK_DIR/agentshield"
+          chmod +x "$MOCK_DIR/agentshield"
+
+          tar czf "$RUNNER_TEMP/agentshield.tar.gz" -C "$MOCK_DIR" agentshield
+
+          mkdir -p "$HOME/.local/bin"
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'OUTPUT_FILE=""' \
+            'URL=""' \
+            'args=("$@")' \
+            'i=0' \
+            'while [ $i -lt ${#args[@]} ]; do' \
+            '  case "${args[$i]}" in' \
+            '    -o) i=$((i+1)); OUTPUT_FILE="${args[$i]}" ;;' \
+            '    http*) URL="${args[$i]}" ;;' \
+            '  esac' \
+            '  i=$((i+1))' \
+            'done' \
+            'if [[ "$URL" == *"agentshield"* ]] && [ -n "$OUTPUT_FILE" ]; then' \
+            '  cp "$RUNNER_TEMP/agentshield.tar.gz" "$OUTPUT_FILE"' \
+            '  exit 0' \
+            'fi' \
+            'exec /usr/bin/curl "$@"' \
+            > "$HOME/.local/bin/curl"
+          chmod +x "$HOME/.local/bin/curl"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          format: 'json'
+          fail-on: 'critical'
+          upload-sarif: 'false'
+          version: 'v0.1.0'
+        continue-on-error: true
+
+      - name: Assert exit-code output is set
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ -z "$EXIT_CODE" ]; then
+            echo "FAIL: exit-code output was not set"
+            exit 1
+          fi
+          echo "PASS: exit-code is '$EXIT_CODE'"
+
+      - name: Assert finding-count output is set
+        env:
+          FINDING_COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $FINDING_COUNT"
+          if [ -z "$FINDING_COUNT" ]; then
+            echo "FAIL: finding-count output was not set"
+            exit 1
+          fi
+          echo "PASS: finding-count is '$FINDING_COUNT'"
+
+      - name: Assert sarif-file is empty for json format
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "sarif-file: '$SARIF_FILE'"
+          if [ -n "$SARIF_FILE" ]; then
+            echo "FAIL: sarif-file should be empty when format=json, got '$SARIF_FILE'"
+            exit 1
+          fi
+          echo "PASS: sarif-file is empty as expected for json format"
