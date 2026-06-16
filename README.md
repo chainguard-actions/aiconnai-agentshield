@@ -1,1 +1,15 @@
-# aiconnai-agentshield
+# aiconnai/agentshield
+
+Scan supported AI agent extension frameworks for security vulnerabilities
+
+Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at [https://github.com/aiconnai/agentshield](https://github.com/aiconnai/agentshield).
+
+## Versions
+
+| Version | Tag | Upstream commit |
+|---------|-----|-----------------|
+| v0.8.7 | [`v0.8.7`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.7) | [`a1a5711`](https://github.com/aiconnai/agentshield/commit/a1a571197211793422d31811be3d7735dae0a30a) |
+
+## Privacy
+
+This Action contacts Chainguard's licensing server to verify authorization. Connection metadata (IP address, GitHub repository identifier, timestamp, and any metadata encoded in the auth token) is transmitted to Chainguard, Inc. even if authorization is denied in accordance with our [Privacy Notice](https://www.chainguard.dev/legal/privacy-notice)
