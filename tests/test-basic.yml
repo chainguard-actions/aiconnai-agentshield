@@ -1,0 +1,100 @@
+name: Test basic usage (console format)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install mock agentshield and intercept downloads
+        run: |
+          # Write mock agentshield script to a known location
+          cat > /tmp/mock-agentshield.sh << 'EOF'
+          #!/bin/bash
+          echo "AgentShield mock scanner: $@"
+          exit 0
+          EOF
+          chmod +x /tmp/mock-agentshield.sh
+
+          # Create a tarball containing the mock binary
+          mkdir -p /tmp/mock-agentshield-dir
+          cp /tmp/mock-agentshield.sh /tmp/mock-agentshield-dir/agentshield
+          chmod +x /tmp/mock-agentshield-dir/agentshield
+          tar czf /tmp/mock-agentshield.tar.gz -C /tmp/mock-agentshield-dir agentshield
+
+          # Override curl to intercept agentshield downloads
+          cat > /tmp/mock-curl.sh << 'EOF'
+          #!/bin/bash
+          # Check if this is an agentshield API or download request
+          for arg in "$@"; do
+            if echo "$arg" | grep -q "api.github.com/repos/limaronaldo/agentshield"; then
+              echo '{"tag_name":"v0.1.0","name":"v0.1.0"}'
+              exit 0
+            fi
+          done
+          # Check for download URL and -o flag
+          OUTPUT=""
+          IS_AGENTSHIELD=false
+          PREV=""
+          for arg in "$@"; do
+            if [ "$PREV" = "-o" ]; then
+              OUTPUT="$arg"
+            fi
+            if echo "$arg" | grep -q "limaronaldo/agentshield/releases/download"; then
+              IS_AGENTSHIELD=true
+            fi
+            PREV="$arg"
+          done
+          if [ "$IS_AGENTSHIELD" = "true" ] && [ -n "$OUTPUT" ]; then
+            cp /tmp/mock-agentshield.tar.gz "$OUTPUT"
+            exit 0
+          fi
+          # Fall through to real curl
+          /usr/bin/curl "$@"
+          EOF
+          chmod +x /tmp/mock-curl.sh
+          sudo cp /tmp/mock-curl.sh /usr/local/bin/curl
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          format: 'console'
+          fail-on: 'critical'
+          upload-sarif: 'false'
+          version: 'v0.1.0'
+        continue-on-error: true
+
+      - name: Assert exit-code output is set
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ -z "$EXIT_CODE" ]; then
+            echo "FAIL: exit-code output was not set"
+            exit 1
+          fi
+          echo "PASS: exit-code is '$EXIT_CODE'"
+
+      - name: Assert finding-count output is set
+        env:
+          FINDING_COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $FINDING_COUNT"
+          if [ -z "$FINDING_COUNT" ]; then
+            echo "FAIL: finding-count output was not set"
+            exit 1
+          fi
+          echo "PASS: finding-count is '$FINDING_COUNT'"
+
+      - name: Assert exit-code is valid
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ] && [ "$EXIT_CODE" != "1" ] && [ "$EXIT_CODE" != "2" ]; then
+            echo "FAIL: exit-code '$EXIT_CODE' is not one of 0, 1, 2"
+            exit 1
+          fi
+          echo "PASS: exit-code '$EXIT_CODE' is valid"

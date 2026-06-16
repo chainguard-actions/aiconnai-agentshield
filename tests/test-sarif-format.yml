@@ -1,0 +1,130 @@
+name: Test SARIF format output
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install mock agentshield and intercept downloads
+        run: |
+          # Write mock agentshield script that creates a valid SARIF file when --output is given
+          cat > /tmp/mock-agentshield.sh << 'EOF'
+          #!/bin/bash
+          echo "AgentShield mock scanner: $@"
+          OUTPUT=""
+          PREV=""
+          for arg in "$@"; do
+            if [ "$PREV" = "--output" ]; then
+              OUTPUT="$arg"
+            fi
+            PREV="$arg"
+          done
+          if [ -n "$OUTPUT" ]; then
+            printf '{"$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","version":"2.1.0","runs":[{"tool":{"driver":{"name":"AgentShield","version":"0.1.0","rules":[]}},"results":[]}]}' > "$OUTPUT"
+          fi
+          exit 0
+          EOF
+          chmod +x /tmp/mock-agentshield.sh
+
+          # Create a tarball containing the mock binary
+          mkdir -p /tmp/mock-agentshield-dir
+          cp /tmp/mock-agentshield.sh /tmp/mock-agentshield-dir/agentshield
+          chmod +x /tmp/mock-agentshield-dir/agentshield
+          tar czf /tmp/mock-agentshield.tar.gz -C /tmp/mock-agentshield-dir agentshield
+
+          # Override curl to intercept agentshield downloads
+          cat > /tmp/mock-curl.sh << 'EOF'
+          #!/bin/bash
+          for arg in "$@"; do
+            if echo "$arg" | grep -q "api.github.com/repos/limaronaldo/agentshield"; then
+              echo '{"tag_name":"v0.1.0","name":"v0.1.0"}'
+              exit 0
+            fi
+          done
+          OUTPUT=""
+          IS_AGENTSHIELD=false
+          PREV=""
+          for arg in "$@"; do
+            if [ "$PREV" = "-o" ]; then
+              OUTPUT="$arg"
+            fi
+            if echo "$arg" | grep -q "limaronaldo/agentshield/releases/download"; then
+              IS_AGENTSHIELD=true
+            fi
+            PREV="$arg"
+          done
+          if [ "$IS_AGENTSHIELD" = "true" ] && [ -n "$OUTPUT" ]; then
+            cp /tmp/mock-agentshield.tar.gz "$OUTPUT"
+            exit 0
+          fi
+          /usr/bin/curl "$@"
+          EOF
+          chmod +x /tmp/mock-curl.sh
+          sudo cp /tmp/mock-curl.sh /usr/local/bin/curl
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          format: 'sarif'
+          fail-on: 'critical'
+          upload-sarif: 'false'
+          version: 'v0.1.0'
+        continue-on-error: true
+
+      - name: Assert sarif-file output is set
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "sarif-file: $SARIF_FILE"
+          if [ -z "$SARIF_FILE" ]; then
+            echo "FAIL: sarif-file output was not set"
+            exit 1
+          fi
+          echo "PASS: sarif-file is '$SARIF_FILE'"
+
+      - name: Assert sarif-file exists on disk
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "Checking if SARIF file exists at: $SARIF_FILE"
+          if [ ! -f "$SARIF_FILE" ]; then
+            echo "FAIL: SARIF file not found at '$SARIF_FILE'"
+            exit 1
+          fi
+          echo "PASS: SARIF file exists"
+
+      - name: Assert sarif-file is valid JSON
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "Validating SARIF file as JSON..."
+          if ! python3 -c "import json; json.load(open('$SARIF_FILE'))" 2>/dev/null; then
+            echo "FAIL: SARIF file is not valid JSON"
+            exit 1
+          fi
+          echo "PASS: SARIF file is valid JSON"
+
+      - name: Assert finding-count is a number
+        env:
+          FINDING_COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $FINDING_COUNT"
+          if ! echo "$FINDING_COUNT" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: finding-count '$FINDING_COUNT' is not a non-negative integer"
+            exit 1
+          fi
+          echo "PASS: finding-count is '$FINDING_COUNT'"
+
+      - name: Assert exit-code is valid
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ] && [ "$EXIT_CODE" != "1" ] && [ "$EXIT_CODE" != "2" ]; then
+            echo "FAIL: exit-code '$EXIT_CODE' is not one of 0, 1, 2"
+            exit 1
+          fi
+          echo "PASS: exit-code '$EXIT_CODE' is valid"
