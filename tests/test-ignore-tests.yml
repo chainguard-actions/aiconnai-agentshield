@@ -1,0 +1,88 @@
+name: Test ignore-tests flag
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install mock agentshield binary and curl
+        run: |
+          set -euo pipefail
+          MOCK_DIR="$RUNNER_TEMP/mock-bins"
+          mkdir -p "$MOCK_DIR"
+
+          # Create mock agentshield script that records its args
+          printf '%s\n' \
+            '#!/bin/bash' \
+            'echo "AgentShield mock scanner: $*"' \
+            'echo "$*" > "$RUNNER_TEMP/agentshield-args.txt"' \
+            'exit 0' > "$MOCK_DIR/agentshield"
+          chmod +x "$MOCK_DIR/agentshield"
+
+          # Build a tar.gz with the mock binary
+          ARCHIVE_DIR="$RUNNER_TEMP/archive-build"
+          mkdir -p "$ARCHIVE_DIR"
+          cp "$MOCK_DIR/agentshield" "$ARCHIVE_DIR/agentshield"
+          tar czf "$RUNNER_TEMP/mock-agentshield.tar.gz" -C "$ARCHIVE_DIR" agentshield
+
+          RTEMP="$RUNNER_TEMP"
+
+          # Create mock curl that intercepts downloads
+          printf '%s\n' \
+            '#!/bin/bash' \
+            'ARGS=("$@")' \
+            'OUTPUT=""' \
+            'URL=""' \
+            'for i in "${!ARGS[@]}"; do' \
+            '  case "${ARGS[$i]}" in' \
+            '    -o) OUTPUT="${ARGS[$((i+1))]}" ;;' \
+            '    http*) URL="${ARGS[$i]}" ;;' \
+            '  esac' \
+            'done' \
+            'if echo "$URL" | grep -q "api.github.com"; then' \
+            '  echo '"'"'{"tag_name":"v0.1.0"}'"'"'' \
+            '  exit 0' \
+            'fi' \
+            'if [ -n "$OUTPUT" ]; then' \
+            "  cp \"${RTEMP}/mock-agentshield.tar.gz\" \"\$OUTPUT\"" \
+            'else' \
+            "  cat \"${RTEMP}/mock-agentshield.tar.gz\"" \
+            'fi' \
+            'exit 0' > "$MOCK_DIR/curl"
+          chmod +x "$MOCK_DIR/curl"
+
+          echo "$MOCK_DIR" >> "$GITHUB_PATH"
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          format: 'console'
+          fail-on: 'critical'
+          upload-sarif: 'false'
+          ignore-tests: 'true'
+        continue-on-error: true
+
+      - name: Assert exit-code output is set
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ -z "$EXIT_CODE" ]; then
+            echo "FAIL: exit-code output was not set"
+            exit 1
+          fi
+          echo "PASS: exit-code=$EXIT_CODE"
+
+      - name: Assert finding-count is 0 for non-sarif format
+        env:
+          FINDING_COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $FINDING_COUNT"
+          if [ "$FINDING_COUNT" != "0" ]; then
+            echo "FAIL: expected finding-count=0 for console format, got '$FINDING_COUNT'"
+            exit 1
+          fi
+          echo "PASS: finding-count=$FINDING_COUNT"

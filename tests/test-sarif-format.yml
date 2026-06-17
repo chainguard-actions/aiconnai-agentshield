@@ -1,0 +1,119 @@
+name: Test SARIF format output
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install mock agentshield binary and curl
+        run: |
+          set -euo pipefail
+          MOCK_DIR="$RUNNER_TEMP/mock-bins"
+          mkdir -p "$MOCK_DIR"
+
+          # Create mock agentshield script that writes a valid SARIF file
+          # Uses python3 to write SARIF to avoid heredoc YAML issues
+          printf '%s\n' \
+            '#!/bin/bash' \
+            'echo "AgentShield mock scanner: $*"' \
+            'OUTPUT_FILE=""' \
+            'ARGS=("$@")' \
+            'for i in "${!ARGS[@]}"; do' \
+            '  if [ "${ARGS[$i]}" = "--output" ]; then' \
+            '    OUTPUT_FILE="${ARGS[$((i+1))]}"' \
+            '  fi' \
+            'done' \
+            'if [ -n "$OUTPUT_FILE" ]; then' \
+            '  python3 -c "import json; sarif={\"version\":\"2.1.0\",\"runs\":[{\"tool\":{\"driver\":{\"name\":\"AgentShield\",\"version\":\"0.1.0\",\"rules\":[]}},\"results\":[]}]}; print(json.dumps(sarif))" > "$OUTPUT_FILE"' \
+            'fi' \
+            'exit 0' > "$MOCK_DIR/agentshield"
+          chmod +x "$MOCK_DIR/agentshield"
+
+          # Build a tar.gz with the mock binary
+          ARCHIVE_DIR="$RUNNER_TEMP/archive-build"
+          mkdir -p "$ARCHIVE_DIR"
+          cp "$MOCK_DIR/agentshield" "$ARCHIVE_DIR/agentshield"
+          tar czf "$RUNNER_TEMP/mock-agentshield.tar.gz" -C "$ARCHIVE_DIR" agentshield
+
+          RTEMP="$RUNNER_TEMP"
+
+          # Create mock curl that intercepts downloads
+          printf '%s\n' \
+            '#!/bin/bash' \
+            'ARGS=("$@")' \
+            'OUTPUT=""' \
+            'URL=""' \
+            'for i in "${!ARGS[@]}"; do' \
+            '  case "${ARGS[$i]}" in' \
+            '    -o) OUTPUT="${ARGS[$((i+1))]}" ;;' \
+            '    http*) URL="${ARGS[$i]}" ;;' \
+            '  esac' \
+            'done' \
+            'if echo "$URL" | grep -q "api.github.com"; then' \
+            '  echo '"'"'{"tag_name":"v0.1.0"}'"'"'' \
+            '  exit 0' \
+            'fi' \
+            'if [ -n "$OUTPUT" ]; then' \
+            "  cp \"${RTEMP}/mock-agentshield.tar.gz\" \"\$OUTPUT\"" \
+            'else' \
+            "  cat \"${RTEMP}/mock-agentshield.tar.gz\"" \
+            'fi' \
+            'exit 0' > "$MOCK_DIR/curl"
+          chmod +x "$MOCK_DIR/curl"
+
+          echo "$MOCK_DIR" >> "$GITHUB_PATH"
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          format: 'sarif'
+          fail-on: 'critical'
+          upload-sarif: 'false'
+        continue-on-error: true
+
+      - name: Assert sarif-file output is set
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "sarif-file: $SARIF_FILE"
+          if [ -z "$SARIF_FILE" ]; then
+            echo "FAIL: sarif-file output was not set"
+            exit 1
+          fi
+          echo "PASS: sarif-file=$SARIF_FILE"
+
+      - name: Assert SARIF file exists
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "Checking for SARIF file at: $SARIF_FILE"
+          if [ ! -f "$SARIF_FILE" ]; then
+            echo "FAIL: SARIF file does not exist at $SARIF_FILE"
+            exit 1
+          fi
+          echo "PASS: SARIF file exists"
+
+      - name: Assert finding-count output is a number
+        env:
+          FINDING_COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $FINDING_COUNT"
+          if ! echo "$FINDING_COUNT" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: finding-count is not a non-negative integer: '$FINDING_COUNT'"
+            exit 1
+          fi
+          echo "PASS: finding-count=$FINDING_COUNT"
+
+      - name: Assert exit-code output is set
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ -z "$EXIT_CODE" ]; then
+            echo "FAIL: exit-code output was not set"
+            exit 1
+          fi
+          echo "PASS: exit-code=$EXIT_CODE"

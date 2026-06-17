@@ -1,17 +1,266 @@
-# aiconnai/agentshield
+# AgentShield
 
-Scan supported AI agent extension frameworks for security vulnerabilities
+**Security scanner for AI agent extensions - offline-first, multi-framework, SARIF output.**
 
-Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at [https://github.com/aiconnai/agentshield](https://github.com/aiconnai/agentshield).
+[![CI](https://github.com/limaronaldo/agentshield/actions/workflows/ci.yml/badge.svg)](https://github.com/limaronaldo/agentshield/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
+[![Crates.io](https://img.shields.io/crates/v/agent-shield.svg)](https://crates.io/crates/agent-shield)
+[![docs.rs](https://img.shields.io/docsrs/agent-shield)](https://docs.rs/agent-shield)
 
-## Versions
+AgentShield scans AI agent extensions for security vulnerabilities before they reach production. It runs locally as a single Rust binary, shares no source code with a service, and emits console, JSON, SARIF, and HTML reports.
 
-| Version | Tag | Upstream commit |
-|---------|-----|-----------------|
-| v0.8.4 | [`v0.8.4`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.4) | [`8113402`](https://github.com/aiconnai/agentshield/commit/811340251f979f99cb7cb82162a3c62d70937177) |
-| v0.8.5 | [`v0.8.5`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.5) | [`dd1554d`](https://github.com/aiconnai/agentshield/commit/dd1554dc3219f681a589ad65b3d2e59fe1076bd0) |
-| v0.8.6 | [`v0.8.6`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.6) | [`b8de02a`](https://github.com/aiconnai/agentshield/commit/b8de02a7182892028df56f65552674a0497e212e) |
-| v0.8.7 | [`v0.8.7`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.7) | [`a1a5711`](https://github.com/aiconnai/agentshield/commit/a1a571197211793422d31811be3d7735dae0a30a) |
+AgentShield is currently aligned with the `0.8.0` release line.
+
+---
+
+## Why AgentShield?
+
+AI agents are being connected to tools that can execute commands, read and write files, make HTTP requests, install packages, and call external services. A single malicious or poorly-written extension can:
+
+- **Exfiltrate credentials** by reading environment variables or local secret files and sending them to an attacker-controlled endpoint.
+- **Execute arbitrary commands** by passing user-controlled input into shell or process APIs.
+- **Install backdoors at runtime** through package manager calls inside tool handlers.
+- **Proxy SSRF requests** by fetching URLs derived from tool arguments.
+- **Leak sensitive data to model context** through unguarded prompts, tool results, or rule files.
+
+AgentShield catches these patterns with static analysis, framework adapters, policy evaluation, suppressions, baselines, egress policy generation, attestations, and SARIF output for GitHub Code Scanning.
+
+### How it compares
+
+| Feature | AgentShield | mcp-scan | Invariant Labs |
+|---------|:-----------:|:--------:|:--------------:|
+| Rust single binary | Yes | No | No |
+| Offline / local-first | Yes | Partial | No |
+| Multi-framework adapters | Yes | MCP-focused | MCP-focused |
+| Static analysis | tree-sitter + targeted parsers | Regex-oriented | Runtime/cloud-oriented |
+| Cross-file sanitizer analysis | Yes | No | No |
+| SARIF output | Yes | No | No |
+| GitHub Action | Yes | No | No |
+
+---
+
+## Quick Start
+
+### GitHub Action
+
+Add to `.github/workflows/security.yml`:
+
+```yaml
+name: Agent Security
+on: [push, pull_request]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: limaronaldo/agentshield@v1
+        with:
+          path: '.'
+          fail-on: 'high'
+          ignore-tests: true
+          upload-sarif: true
+```
+
+Findings appear as PR annotations and in the repository's **Security > Code scanning** tab when SARIF upload is enabled.
+
+### CLI
+
+```bash
+# Install from crates.io
+cargo install agent-shield
+
+# Scan current directory
+agentshield scan .
+
+# Scan with a specific format and policy threshold
+agentshield scan ./my-agent-extension --format sarif --fail-on medium --output results.sarif
+
+# Skip test files
+agentshield scan ./my-agent-extension --ignore-tests
+
+# Generate a standalone HTML report
+agentshield scan ./my-agent-extension --format html --output report.html
+
+# List all rules
+agentshield list-rules
+
+# Create starter config
+agentshield init
+```
+
+### Pre-built binaries
+
+Download from the [latest release](https://github.com/limaronaldo/agentshield/releases/latest) for Linux, macOS, and Windows targets.
+
+### From source
+
+```bash
+git clone https://github.com/limaronaldo/agentshield.git
+cd agentshield
+cargo build --release
+./target/release/agentshield scan /path/to/agent-extension
+```
+
+---
+
+## Supported Frameworks
+
+AgentShield runs all matching adapters in a repository instead of stopping at the first match.
+
+| Framework | Status | Adapter coverage |
+|-----------|--------|------------------|
+| MCP (Model Context Protocol) | Supported | MCP server manifests, Python/TypeScript/JavaScript source, tool schemas, dependencies, provenance |
+| OpenClaw | Supported | `SKILL.md` skill files plus related source/dependency surfaces |
+| CrewAI | Supported | Python projects detected from dependency metadata or imports |
+| LangChain / LangGraph | Supported | LangChain/LangGraph dependency metadata, imports, and `langgraph.json` |
+| GPT Actions | Supported | Action/OpenAPI-style surfaces for custom GPT integrations |
+| Cursor Rules | Supported | Cursor rule files and related agent guidance surfaces |
+
+---
+
+## CLI Commands
+
+| Command | Purpose |
+|---------|---------|
+| `agentshield scan [path]` | Scan an agent extension directory and emit console, JSON, SARIF, or HTML output. |
+| `agentshield list-rules` | List available detection rules as a table or JSON. |
+| `agentshield doctor [path]` | Print environment, config, compile-feature, and adapter diagnostics. |
+| `agentshield init` | Generate a starter `.agentshield.toml` config file. |
+| `agentshield suppress <fingerprint>` | Add a suppression entry with a required reason and optional expiry. |
+| `agentshield list-suppressions` | Show suppressions configured in `.agentshield.toml`. |
+| `agentshield certify [path]` | Generate a DSSE attestation envelope for scan results. |
+| `agentshield wrap --policy <path> -- <command>` | Enforce an egress policy through a local HTTP proxy when built with the `runtime` feature. |
+
+Useful `scan` options include `--config`, `--format`, `--fail-on`, `--output`, `--ignore-tests`, `--baseline`, `--write-baseline`, and `--emit-egress-policy`.
+
+---
+
+## Detection Rules
+
+AgentShield ships built-in rules for command execution, credential exfiltration, SSRF, arbitrary file access, runtime package installation, self-modification, prompt injection surfaces, excessive permissions, dependency hygiene, dynamic code execution, metadata service access, download-and-execute flows, overbroad filesystem capabilities, unsafe deserialization, archive traversal, and secret leakage.
+
+Use the CLI for the authoritative rule list in your installed version:
+
+```bash
+agentshield list-rules
+agentshield list-rules --format json
+```
+
+---
+
+## Output Formats
+
+| Format | Flag | Use case |
+|--------|------|----------|
+| Console | `--format console` | Local development default |
+| JSON | `--format json` | Programmatic consumption and fingerprint extraction |
+| SARIF | `--format sarif` | GitHub Code Scanning and compatible tools |
+| HTML | `--format html` | Shareable standalone reports |
+
+---
+
+## Configuration
+
+### Trust workflows
+
+AgentShield includes trust workflow documentation for baselines, suppressions, certification attestations, and egress enforcement:
+
+- `docs/BASELINES.md`: write and use `.agentshield-baseline.json` for known findings.
+- `docs/SUPPRESSIONS.md`: suppress individual findings by fingerprint with required reasons and optional expiry.
+- `docs/CERTIFICATION.md`: generate unsigned or Ed25519-signed DSSE attestations.
+- `docs/EGRESS.md`: emit `agentshield.egress.toml` and enforce it with `agentshield wrap`.
+
+Release binaries are built with the `full` feature set, including Python parsing, TypeScript parsing, and runtime `wrap` support. If building from source, use `cargo build --features full --release` to include `agentshield wrap`.
+
+Create `.agentshield.toml` in your project root or run `agentshield init`:
+
+```toml
+[policy]
+# Minimum severity to fail the scan: info, low, medium, high, critical
+fail_on = "high"
+
+# Rules to skip entirely
+ignore_rules = ["SHIELD-008"]
+
+# Downgrade specific rules
+[policy.overrides]
+"SHIELD-012" = "info"
+
+[scan]
+# Skip test files before parsing
+ignore_tests = true
+```
+
+Suppressions can be added through `agentshield suppress <fingerprint> --reason "..."` after obtaining finding fingerprints from JSON output.
+
+---
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Scan passed with no findings above threshold |
+| 1 | Scan failed with findings above threshold |
+| 2 | Scan error, such as invalid config or no supported adapter found |
+
+---
+
+## Language Support
+
+| Language | Parser | Feature flag |
+|----------|--------|--------------|
+| Python | tree-sitter AST with regex source/sink patterns | `python` (default) |
+| TypeScript/TSX | tree-sitter AST with fallback patterns | `typescript` (default) |
+| JavaScript/JSX | tree-sitter AST through TypeScript grammar support | `typescript` (default) |
+| Shell | Regex parser | always on |
+| JSON Schema / OpenAPI-style schemas | Schema parser | always on |
+
+Both tree-sitter parsers are feature-gated:
+
+```bash
+cargo build --no-default-features
+cargo build --features python
+cargo build --features full
+```
+
+The `full` feature enables language parsers plus the runtime proxy used by `agentshield wrap`.
+
+---
+
+## Architecture
+
+```text
+CLI / GitHub Action / Library API
+       |
+       v
+Scan Engine -> ScanReport
+       |
+       v
+Adapters -> Parsers -> Cross-file analysis -> Unified IR (ScanTarget)
+       |
+       v
+Rule Engine -> Policy / Suppressions / Baseline filtering
+       |
+       v
+Console / JSON / SARIF / HTML / DSSE attestation
+```
+
+Adapters translate framework-specific files into a unified intermediate representation. Detectors consume only that IR, so new frameworks can be added without rewriting every rule. Policy, suppressions, and baselines are separate from detection so scans remain explainable and repeatable.
+
+---
+
+## Development
+
+```bash
+cargo test
+cargo clippy -- -D warnings
+cargo fmt --check
+cargo run -- scan tests/fixtures/mcp_servers/vuln_cmd_inject
+cargo run -- list-rules
+```
+
+For release-specific notes, see `docs/releases/0.8.0.md` and `docs/RELEASE_CHECKLIST.md`.
 
 ## Privacy
 
