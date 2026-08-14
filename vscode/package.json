@@ -1,0 +1,110 @@
+{
+  "name": "agentshield",
+  "displayName": "AgentShield",
+  "description": "Security scanner for AI agent extensions — inline findings for MCP, LangChain, CrewAI, OpenClaw",
+  "version": "0.8.8",
+  "publisher": "aiconnai",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aiconnai/agentshield"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "keywords": [
+    "security",
+    "mcp",
+    "langchain",
+    "crewai",
+    "ai",
+    "agent",
+    "sarif"
+  ],
+  "activationEvents": [
+    "workspaceContains:**/package.json",
+    "workspaceContains:**/pyproject.toml",
+    "workspaceContains:**/SKILL.md",
+    "workspaceContains:**/langgraph.json",
+    "workspaceContains:**/.cursorrules",
+    "workspaceContains:**/openapi.json",
+    "workspaceContains:**/openapi.yaml",
+    "workspaceContains:**/openapi.yml",
+    "workspaceContains:**/.agentshield.toml",
+    "workspaceContains:**/requirements.txt",
+    "workspaceContains:**/Cargo.toml",
+    "workspaceContains:**/hermes.json",
+    "workspaceContains:**/.hermes.md"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentshield.scan",
+        "title": "AgentShield: Scan Workspace"
+      }
+    ],
+    "configuration": {
+      "title": "AgentShield",
+      "properties": {
+        "agentshield.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to agentshield binary (leave empty to use PATH)"
+        },
+        "agentshield.configPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to .agentshield.toml (leave empty to auto-detect in workspace)"
+        },
+        "agentshield.baselinePath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional baseline file to filter existing findings (leave empty to disable)"
+        },
+        "agentshield.failOn": {
+          "type": "string",
+          "default": "",
+          "enum": ["", "info", "low", "medium", "high", "critical"],
+          "description": "Optional minimum severity to fail on (defaults to config value)"
+        },
+        "agentshield.ignoreTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Skip test files during scanning"
+        },
+        "agentshield.scanOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically scan after saving files"
+        },
+        "agentshield.scanOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Scan workspace when opened"
+        },
+        "agentshield.timeout": {
+          "type": "number",
+          "default": 30,
+          "description": "Scan timeout in seconds"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "test": "npm run compile && node --test dist/test/*.test.js",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^5.4.0"
+  }
+}

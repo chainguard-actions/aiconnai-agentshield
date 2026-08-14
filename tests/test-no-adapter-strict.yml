@@ -1,0 +1,41 @@
+name: Test no adapter found with strict=true (default)
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Prepare fake agentshield binary (no adapter)
+        run: |
+          cp "$GITHUB_WORKSPACE/tests/fixtures/fake-agentshield-no-adapter.sh" /tmp/fake-agentshield
+          chmod +x /tmp/fake-agentshield
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          format: 'console'
+          fail-on: 'high'
+          upload-sarif: 'false'
+          strict: 'true'
+          binary-path: '/tmp/fake-agentshield'
+        # strict=true means "no adapter found" (exit 2) SHOULD fail the action
+        continue-on-error: true
+
+      - name: Assert action failed (strict=true blocks no-adapter)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed as expected with strict=true and no adapter"
+          elif [ "$OUTCOME" = "success" ]; then
+            echo "FAIL: action succeeded but strict=true should block when no adapter found"
+            exit 1
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

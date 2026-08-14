@@ -1,0 +1,137 @@
+[package]
+name = "agent-shield"
+version = "0.8.8"
+edition = "2024"
+authors = ["Ronaldo Lima"]
+description = "Security scanner for AI agent extensions — offline-first, multi-framework, SARIF output"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/aiconnai/agentshield"
+homepage = "https://github.com/aiconnai/agentshield"
+keywords = ["security", "ai", "mcp", "static-analysis", "sarif"]
+categories = ["development-tools", "command-line-utilities"]
+readme = "README.md"
+
+[lints.rust]
+unsafe_code = "warn"
+warnings = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+collapsible_if = "allow"
+
+[lib]
+name = "agentshield"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agentshield"
+path = "src/bin/cli.rs"
+
+[features]
+default = ["python", "typescript"]
+
+python = []
+typescript = ["dep:tree-sitter-typescript"]
+
+# Runtime proxy for `wrap` command (tokio + parking_lot)
+runtime = ["dep:tokio", "dep:parking_lot"]
+
+# Runtime guard CLI/library support for evaluating runtime events
+runtime-guard = []
+
+# All features
+full = ["python", "typescript", "runtime", "runtime-guard"]
+
+[dependencies]
+# CLI
+clap = { version = "4.4", features = ["derive", "env", "color"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Error handling
+thiserror = "1.0"
+
+# Tree-sitter core + language grammars
+tree-sitter = "0.24"
+tree-sitter-typescript = { version = "0.23", optional = true }
+
+# Regex for shell parser, source/sink patterns
+regex = "1.10"
+once_cell = "1.19"
+
+# File walking (.gitignore-aware)
+ignore = "0.4"
+glob = "0.3"
+
+# Hashing & signing
+sha2 = "0.10"
+hex = "0.4"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+base64 = "0.22"
+
+# Config parsing
+toml = "0.8"
+toml_edit = { version = "0.22", features = ["serde"] }
+
+# Timestamps
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+
+# Typosquat detection
+levenshtein = "1.0"
+
+# URL parsing
+url = "2.5"
+
+# Async runtime for egress proxy (feature-gated)
+tokio = { version = "1", features = ["full"], optional = true }
+parking_lot = { version = "0.12", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+# Atomic handle-relative discovery reads. Already present transitively via tempfile.
+rustix = { version = "1.1.3", features = ["fs"] }
+
+[dev-dependencies]
+tempfile = "3.9"
+pretty_assertions = "1.4"
+proptest = "1.4"
+
+[[test]]
+name = "runtime_event"
+path = "tests/runtime_event.rs"
+required-features = ["runtime-guard"]
+
+[[test]]
+name = "runtime_guard"
+path = "tests/runtime_guard.rs"
+required-features = ["runtime-guard"]
+
+[[test]]
+name = "runtime_mcp_proxy"
+path = "tests/runtime_mcp_proxy.rs"
+required-features = ["runtime-guard"]
+
+[[test]]
+name = "runtime_redaction"
+path = "tests/runtime_redaction.rs"
+required-features = ["runtime-guard"]
+
+[[test]]
+name = "runtime_schema"
+path = "tests/runtime_schema.rs"
+required-features = ["runtime-guard"]
+
+[[bench]]
+name = "scan"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -1,0 +1,85 @@
+name: Test findings detected (action fails)
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Prepare fake agentshield binary (with findings)
+        run: |
+          cp "$GITHUB_WORKSPACE/tests/fixtures/fake-agentshield-findings.sh" /tmp/fake-agentshield
+          chmod +x /tmp/fake-agentshield
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          format: 'sarif'
+          fail-on: 'high'
+          upload-sarif: 'false'
+          strict: 'true'
+          binary-path: '/tmp/fake-agentshield'
+        # Findings above threshold cause exit 1, so the action will fail
+        continue-on-error: true
+
+      - name: Assert action failed due to findings
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed as expected when findings are detected"
+          elif [ "$OUTCOME" = "success" ]; then
+            echo "FAIL: action succeeded but should have failed due to findings"
+            exit 1
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+
+      - name: Assert exit-code is 1 (findings)
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "1" ]; then
+            echo "FAIL: expected exit-code=1 (findings), got '$EXIT_CODE'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert finding-count is 1
+        env:
+          COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $COUNT"
+          if [ "$COUNT" != "1" ]; then
+            echo "FAIL: expected finding-count=1, got '$COUNT'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert sarif-file exists and has content
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "sarif-file: $SARIF_FILE"
+          if [ -z "$SARIF_FILE" ]; then
+            echo "FAIL: expected sarif-file to be set"
+            exit 1
+          fi
+          if [ ! -f "$SARIF_FILE" ]; then
+            echo "FAIL: sarif-file '$SARIF_FILE' does not exist"
+            exit 1
+          fi
+          # Verify it's valid JSON with results
+          RESULT_COUNT=$(python3 -c "import json; d=json.load(open('$SARIF_FILE')); print(len(d.get('runs',[{}])[0].get('results',[])))")
+          echo "SARIF result count: $RESULT_COUNT"
+          if [ "$RESULT_COUNT" != "1" ]; then
+            echo "FAIL: expected 1 result in SARIF, got '$RESULT_COUNT'"
+            exit 1
+          fi
+          echo "PASS"

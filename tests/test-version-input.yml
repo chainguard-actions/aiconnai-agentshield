@@ -1,0 +1,68 @@
+name: Test version input normalization
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Prepare fake agentshield binary (clean scan)
+        run: |
+          cp "$GITHUB_WORKSPACE/tests/fixtures/fake-agentshield-clean.sh" /tmp/fake-agentshield
+          chmod +x /tmp/fake-agentshield
+
+      - name: Test with binary-path (bypasses version/download steps)
+        id: action
+        uses: .
+        with:
+          path: '.'
+          format: 'sarif'
+          fail-on: 'medium'
+          upload-sarif: 'false'
+          strict: 'true'
+          ignore-tests: 'true'
+          binary-path: '/tmp/fake-agentshield'
+
+      - name: Assert exit-code is 0
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "FAIL: expected exit-code=0, got '$EXIT_CODE'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert finding-count is 0
+        env:
+          COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $COUNT"
+          if [ "$COUNT" != "0" ]; then
+            echo "FAIL: expected finding-count=0, got '$COUNT'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert sarif-file is set and valid
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "sarif-file: $SARIF_FILE"
+          if [ -z "$SARIF_FILE" ]; then
+            echo "FAIL: expected sarif-file to be set"
+            exit 1
+          fi
+          if [ ! -f "$SARIF_FILE" ]; then
+            echo "FAIL: sarif-file '$SARIF_FILE' does not exist on disk"
+            exit 1
+          fi
+          # Validate it's parseable JSON
+          python3 -c "import json; json.load(open('$SARIF_FILE'))" || {
+            echo "FAIL: sarif-file is not valid JSON"
+            exit 1
+          }
+          echo "PASS: sarif-file is valid JSON"

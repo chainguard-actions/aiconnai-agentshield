@@ -1,0 +1,66 @@
+name: Test invalid binary-path fails gracefully
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a non-executable file to use as invalid binary
+        run: |
+          echo "not a binary" > /tmp/not-executable
+          # Intentionally NOT chmod +x
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          format: 'sarif'
+          fail-on: 'high'
+          upload-sarif: 'false'
+          binary-path: '/tmp/not-executable'
+        # The action should fail because the binary is not executable
+        continue-on-error: true
+
+      - name: Assert action failed due to non-executable binary
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed as expected for non-executable binary"
+          elif [ "$OUTCOME" = "success" ]; then
+            echo "FAIL: action succeeded but should have failed for non-executable binary"
+            exit 1
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+
+      - name: Test with completely missing binary path
+        id: action-missing
+        uses: .
+        with:
+          path: '.'
+          format: 'sarif'
+          fail-on: 'high'
+          upload-sarif: 'false'
+          binary-path: '/tmp/does-not-exist-at-all'
+        continue-on-error: true
+
+      - name: Assert action failed due to missing binary
+        env:
+          OUTCOME: ${{ steps.action-missing.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed as expected for missing binary"
+          elif [ "$OUTCOME" = "success" ]; then
+            echo "FAIL: action succeeded but should have failed for missing binary"
+            exit 1
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
