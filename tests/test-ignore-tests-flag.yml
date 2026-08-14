@@ -1,0 +1,56 @@
+name: Test ignore-tests flag
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fake agentshield binary that records args
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake-bin"
+          cat > "$RUNNER_TEMP/fake-bin/agentshield" << 'SCRIPT'
+          #!/bin/sh
+          # Record the args passed to the binary
+          echo "ARGS: $*" > "$RUNNER_TEMP/agentshield-args.txt"
+          echo "AgentShield scan complete. No findings."
+          exit 0
+          SCRIPT
+          chmod +x "$RUNNER_TEMP/fake-bin/agentshield"
+
+      - id: action
+        uses: .
+        with:
+          binary-path: "${{ runner.temp }}/fake-bin/agentshield"
+          path: "."
+          format: "console"
+          ignore-tests: "true"
+          upload-sarif: "false"
+
+      - name: Assert action succeeded
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "FAIL: expected exit-code=0, got '$EXIT_CODE'"
+            exit 1
+          fi
+          echo "PASS: action succeeded with ignore-tests=true"
+
+      - name: Assert --ignore-tests flag was passed to binary
+        run: |
+          ARGS_FILE="$RUNNER_TEMP/agentshield-args.txt"
+          if [ ! -f "$ARGS_FILE" ]; then
+            echo "FAIL: args file not found at $ARGS_FILE"
+            exit 1
+          fi
+          ARGS=$(cat "$ARGS_FILE")
+          echo "Recorded args: $ARGS"
+          if ! echo "$ARGS" | grep -q -- "--ignore-tests"; then
+            echo "FAIL: --ignore-tests flag was not passed to the binary"
+            exit 1
+          fi
+          echo "PASS: --ignore-tests flag was correctly passed to the binary"

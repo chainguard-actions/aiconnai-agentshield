@@ -1,0 +1,51 @@
+name: Test no-adapter non-strict mode
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fake agentshield binary (no adapter found)
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake-bin"
+          cat > "$RUNNER_TEMP/fake-bin/agentshield" << 'EOF'
+          #!/bin/sh
+          echo "No suitable adapter found for directory: ."
+          exit 2
+          EOF
+          chmod +x "$RUNNER_TEMP/fake-bin/agentshield"
+
+      - id: action
+        uses: .
+        with:
+          binary-path: "${{ runner.temp }}/fake-bin/agentshield"
+          path: "."
+          format: "console"
+          strict: "false"
+          upload-sarif: "false"
+
+      - name: Assert exit-code output is set
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ -z "$EXIT_CODE" ]; then
+            echo "FAIL: exit-code output is empty"
+            exit 1
+          fi
+          echo "PASS: exit-code=$EXIT_CODE"
+
+      - name: Assert finding-count output is set
+        env:
+          FINDING_COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $FINDING_COUNT"
+          # When no adapter found and format=console, finding-count should be 0
+          if [ "$FINDING_COUNT" != "0" ]; then
+            echo "FAIL: expected finding-count=0, got '$FINDING_COUNT'"
+            exit 1
+          fi
+          echo "PASS: finding-count=0"
