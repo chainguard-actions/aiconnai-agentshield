@@ -1,0 +1,52 @@
+name: Test JSON output format
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fake agentshield binary (JSON format, no findings)
+        run: |
+          mkdir -p /tmp/fake-agentshield-json
+          cat > /tmp/fake-agentshield-json/agentshield << 'EOF'
+          #!/bin/sh
+          echo '{"findings":[],"summary":{"total":0}}'
+          exit 0
+          EOF
+          chmod +x /tmp/fake-agentshield-json/agentshield
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          fail-on: 'high'
+          format: 'json'
+          upload-sarif: 'false'
+          strict: 'false'
+          binary-path: '/tmp/fake-agentshield-json/agentshield'
+
+      - name: Assert exit-code is 0
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "FAIL: expected exit-code=0, got '$EXIT_CODE'"
+            exit 1
+          fi
+          echo "PASS: exit-code is 0"
+
+      - name: Assert finding-count is 0 (no SARIF file in json mode)
+        env:
+          COUNT: ${{ steps.action.outputs.finding-count }}
+          SARIF: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "finding-count: $COUNT"
+          echo "sarif-file: $SARIF"
+          if [ "$COUNT" != "0" ]; then
+            echo "FAIL: expected finding-count=0 in json mode, got '$COUNT'"
+            exit 1
+          fi
+          echo "PASS: finding-count is 0 in json format mode"

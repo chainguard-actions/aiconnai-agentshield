@@ -1,0 +1,71 @@
+name: Test ignore-tests flag is passed to binary
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fake agentshield binary that checks for --ignore-tests flag
+        run: |
+          mkdir -p /tmp/fake-agentshield-ignoretests
+          cat > /tmp/fake-agentshield-ignoretests/agentshield << 'EOF'
+          #!/bin/sh
+          # Check if --ignore-tests flag was passed
+          found_flag=0
+          for arg in "$@"; do
+            if [ "$arg" = "--ignore-tests" ]; then
+              found_flag=1
+            fi
+          done
+          if [ "$found_flag" = "0" ]; then
+            echo "ERROR: --ignore-tests flag was not passed"
+            exit 2
+          fi
+          echo "OK: --ignore-tests flag detected"
+          # Write empty SARIF for output
+          out=""
+          prev=""
+          for arg in "$@"; do
+            case "$prev" in
+              --output|-o) out="$arg" ;;
+            esac
+            prev="$arg"
+          done
+          if [ -n "$out" ]; then
+            cat > "$out" << 'SARIF'
+          {
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [{"tool": {"driver": {"name": "AgentShield", "version": "0.0.0-fake"}}, "results": []}]
+          }
+          SARIF
+          fi
+          exit 0
+          EOF
+          chmod +x /tmp/fake-agentshield-ignoretests/agentshield
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          fail-on: 'high'
+          format: 'sarif'
+          upload-sarif: 'false'
+          strict: 'false'
+          ignore-tests: 'true'
+          binary-path: '/tmp/fake-agentshield-ignoretests/agentshield'
+
+      - name: Assert action succeeded (--ignore-tests flag was passed correctly)
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+          COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          echo "finding-count: $COUNT"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "FAIL: expected exit-code=0, got '$EXIT_CODE' (--ignore-tests may not have been passed)"
+            exit 1
+          fi
+          echo "PASS: --ignore-tests flag was correctly passed to the binary"

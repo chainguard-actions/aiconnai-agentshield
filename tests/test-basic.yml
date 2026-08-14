@@ -1,0 +1,93 @@
+name: Test basic usage with binary-path
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fake agentshield binary (no findings, exit 0)
+        run: |
+          mkdir -p /tmp/fake-agentshield-bin
+          cat > /tmp/fake-agentshield-bin/agentshield << 'EOF'
+          #!/bin/sh
+          # Parse args to find --output flag
+          out=""
+          prev=""
+          for arg in "$@"; do
+            case "$prev" in
+              --output|-o) out="$arg" ;;
+            esac
+            prev="$arg"
+          done
+          # If sarif output requested, write a minimal valid SARIF file
+          if [ -n "$out" ]; then
+            cat > "$out" << 'SARIF'
+          {
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [
+              {
+                "tool": {
+                  "driver": {
+                    "name": "AgentShield",
+                    "version": "0.0.0-fake"
+                  }
+                },
+                "results": []
+              }
+            ]
+          }
+          SARIF
+          fi
+          exit 0
+          EOF
+          chmod +x /tmp/fake-agentshield-bin/agentshield
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          fail-on: 'high'
+          format: 'sarif'
+          upload-sarif: 'false'
+          strict: 'false'
+          binary-path: '/tmp/fake-agentshield-bin/agentshield'
+
+      - name: Assert exit-code output
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "FAIL: expected exit-code=0, got '$EXIT_CODE'"
+            exit 1
+          fi
+          echo "PASS: exit-code is 0"
+
+      - name: Assert finding-count output
+        env:
+          COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $COUNT"
+          if [ "$COUNT" != "0" ]; then
+            echo "FAIL: expected finding-count=0, got '$COUNT'"
+            exit 1
+          fi
+          echo "PASS: finding-count is 0"
+
+      - name: Assert sarif-file output is set
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "sarif-file: $SARIF_FILE"
+          if [ -z "$SARIF_FILE" ]; then
+            echo "FAIL: expected sarif-file to be set"
+            exit 1
+          fi
+          if [ ! -f "$SARIF_FILE" ]; then
+            echo "FAIL: sarif-file path '$SARIF_FILE' does not exist"
+            exit 1
+          fi
+          echo "PASS: sarif-file is set and exists"

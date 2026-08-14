@@ -1,0 +1,61 @@
+name: Test console output format
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fake agentshield binary (console format, no findings)
+        run: |
+          mkdir -p /tmp/fake-agentshield-console
+          cat > /tmp/fake-agentshield-console/agentshield << 'EOF'
+          #!/bin/sh
+          echo "AgentShield scan complete. No findings detected."
+          exit 0
+          EOF
+          chmod +x /tmp/fake-agentshield-console/agentshield
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          fail-on: 'medium'
+          format: 'console'
+          upload-sarif: 'false'
+          strict: 'false'
+          binary-path: '/tmp/fake-agentshield-console/agentshield'
+
+      - name: Assert exit-code is 0
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "FAIL: expected exit-code=0, got '$EXIT_CODE'"
+            exit 1
+          fi
+          echo "PASS: exit-code is 0"
+
+      - name: Assert finding-count is 0 (no SARIF in console mode)
+        env:
+          COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $COUNT"
+          if [ "$COUNT" != "0" ]; then
+            echo "FAIL: expected finding-count=0 in console mode, got '$COUNT'"
+            exit 1
+          fi
+          echo "PASS: finding-count is 0 in console format mode"
+
+      - name: Assert sarif-file output is empty in console mode
+        env:
+          SARIF: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "sarif-file: '$SARIF'"
+          if [ -n "$SARIF" ]; then
+            echo "FAIL: expected sarif-file to be empty in console mode, got '$SARIF'"
+            exit 1
+          fi
+          echo "PASS: sarif-file is empty in console format mode"

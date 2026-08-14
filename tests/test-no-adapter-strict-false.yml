@@ -1,0 +1,50 @@
+name: Test no adapter found with strict=false
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fake agentshield binary (no adapter found, exit 2)
+        run: |
+          mkdir -p /tmp/fake-agentshield-noadapter
+          cat > /tmp/fake-agentshield-noadapter/agentshield << 'EOF'
+          #!/bin/sh
+          echo "No suitable adapter found for directory: ."
+          exit 2
+          EOF
+          chmod +x /tmp/fake-agentshield-noadapter/agentshield
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          fail-on: 'high'
+          format: 'console'
+          upload-sarif: 'false'
+          strict: 'false'
+          binary-path: '/tmp/fake-agentshield-noadapter/agentshield'
+
+      - name: Assert exit-code output is 2
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "2" ]; then
+            echo "FAIL: expected exit-code=2 (no adapter), got '$EXIT_CODE'"
+            exit 1
+          fi
+          echo "PASS: exit-code is 2 as expected for no-adapter scenario"
+
+      - name: Assert finding-count is 0
+        env:
+          COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $COUNT"
+          if [ "$COUNT" != "0" ]; then
+            echo "FAIL: expected finding-count=0, got '$COUNT'"
+            exit 1
+          fi
+          echo "PASS: finding-count is 0"
