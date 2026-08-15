@@ -1,0 +1,68 @@
+name: Test basic scan with console format
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up fake agentshield binary and mock curl
+        run: |
+          # Install fake agentshield binary to /tmp
+          cp "$GITHUB_WORKSPACE/tests/fixtures/fake-agentshield.sh" /tmp/fake-agentshield
+          chmod +x /tmp/fake-agentshield
+
+          # Install fake curl that intercepts agentshield downloads
+          mkdir -p /tmp/fake-bin
+          cp "$GITHUB_WORKSPACE/tests/fixtures/fake-curl.sh" /tmp/fake-bin/curl
+          chmod +x /tmp/fake-bin/curl
+
+          # Prepend fake-bin to PATH so fake curl is used
+          echo "/tmp/fake-bin" >> $GITHUB_PATH
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          format: 'console'
+          fail-on: 'critical'
+          upload-sarif: 'false'
+        continue-on-error: true
+
+      - name: Assert exit-code output is set
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ -z "$EXIT_CODE" ]; then
+            echo "FAIL: exit-code output was not set"
+            exit 1
+          fi
+          if [ "$EXIT_CODE" != "0" ] && [ "$EXIT_CODE" != "1" ] && [ "$EXIT_CODE" != "2" ]; then
+            echo "FAIL: exit-code must be 0, 1, or 2, got: $EXIT_CODE"
+            exit 1
+          fi
+          echo "PASS: exit-code=$EXIT_CODE"
+
+      - name: Assert finding-count output is set
+        env:
+          COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $COUNT"
+          if [ -z "$COUNT" ]; then
+            echo "FAIL: finding-count output was not set"
+            exit 1
+          fi
+          echo "PASS: finding-count=$COUNT"
+
+      - name: Assert sarif-file is empty for console format
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "sarif-file: '$SARIF_FILE'"
+          if [ -n "$SARIF_FILE" ]; then
+            echo "FAIL: sarif-file should be empty for console format, got: $SARIF_FILE"
+            exit 1
+          fi
+          echo "PASS: sarif-file is empty as expected for console format"
