@@ -1,0 +1,202 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  version-check:
+    name: Check release invariants
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Ensure release invariants
+        run: .github/scripts/check-release-invariants.sh "$GITHUB_REF_NAME"
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: version-check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: ${{ matrix.target }}
+
+      # Cross-compilation for aarch64-linux
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --locked
+
+      - name: Build (native)
+        if: "!matrix.cross"
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+        run: cargo build --release --target "$MATRIX_TARGET" --features full
+
+      - name: Build (cross)
+        if: matrix.cross
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+        run: cross build --release --target "$MATRIX_TARGET" --features full
+
+      - name: Smoke check wrap command (unix)
+        if: matrix.cross == false && runner.os != 'Windows'
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+        run: |
+          "target/$MATRIX_TARGET/release/agentshield" --help | grep wrap
+
+      - name: Smoke check wrap command (windows)
+        if: matrix.cross == false && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+        run: |
+          & "target\$env:MATRIX_TARGET\release\agentshield.exe" --help | Select-String wrap
+
+      - name: Package (unix)
+        if: matrix.archive == 'tar.gz'
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          BINARY="target/$MATRIX_TARGET/release/agentshield"
+          ARCHIVE="agentshield-${REF_NAME}-${MATRIX_TARGET}.tar.gz"
+          tar czf "$ARCHIVE" -C "$(dirname "$BINARY")" "$(basename "$BINARY")"
+          shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+          safe_archive=$(printf '%s' "$ARCHIVE" | tr -d '\n\r')
+          echo "ARCHIVE=$safe_archive" >> "$GITHUB_ENV"
+
+      - name: Package (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $BINARY = "target/$env:MATRIX_TARGET/release/agentshield.exe"
+          $ARCHIVE = "agentshield-$env:REF_NAME-$env:MATRIX_TARGET.zip"
+          Compress-Archive -Path $BINARY -DestinationPath $ARCHIVE
+          $HASH = (Get-FileHash -Algorithm SHA256 $ARCHIVE).Hash.ToLower()
+          "$HASH  $ARCHIVE" | Out-File -Encoding ascii "$ARCHIVE.sha256"
+          $safeArchive = $ARCHIVE -replace "`r|`n", ""
+          "ARCHIVE=$safeArchive" | Out-File -Append -Encoding ascii $env:GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: agentshield-${{ matrix.target }}
+          path: |
+            agentshield-*.tar.gz
+            agentshield-*.zip
+            agentshield-*.sha256
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/agentshield-*.tar.gz
+            artifacts/agentshield-*.zip
+            artifacts/agentshield-*.sha256
+
+  docker:
+    name: Publish Docker image
+    needs: version-check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive Docker version tag
+        id: docker-version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [ "$version" = "$GITHUB_REF_NAME" ]; then
+            echo "Release tag must start with v; got $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          safe_version=$(printf '%s' "$version" | tr -d '\n\r')
+          echo "version=$safe_version" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/aiconnai/agentshield:${{ steps.docker-version.outputs.version }}
+            ghcr.io/aiconnai/agentshield:latest
+          cache-from: type=gha,scope=agentshield-docker
+          cache-to: type=gha,mode=max,scope=agentshield-docker

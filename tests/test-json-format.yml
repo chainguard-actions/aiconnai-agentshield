@@ -1,4 +1,4 @@
-name: Test console format scan with provided binary
+name: Test JSON format scan with provided binary
 on:
   workflow_dispatch:
 
@@ -8,12 +8,13 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create fake agentshield binary (console format, no findings)
+      - name: Create fake agentshield binary (JSON format, no findings)
         run: |
           mkdir -p /tmp/fake-agentshield-bin
           cat > /tmp/fake-agentshield-bin/agentshield << 'FAKEEOF'
           #!/bin/sh
-          echo "AgentShield scan complete. No findings."
+          # JSON format: print to stdout, exit 0
+          echo '{"findings":[]}'
           exit 0
           FAKEEOF
           chmod +x /tmp/fake-agentshield-bin/agentshield
@@ -22,7 +23,7 @@ jobs:
         uses: .
         with:
           path: '.'
-          format: 'console'
+          format: 'json'
           fail-on: 'high'
           upload-sarif: 'false'
           binary-path: '/tmp/fake-agentshield-bin/agentshield'
@@ -45,6 +46,18 @@ jobs:
           echo "actual finding-count: $ACTUAL"
           if [ "$ACTUAL" != "0" ]; then
             echo "FAIL: expected finding-count=0, got '$ACTUAL'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert sarif-file output is empty for non-sarif format
+        env:
+          ACTUAL: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "actual sarif-file: '$ACTUAL'"
+          # For non-sarif format, sarif-file should be empty
+          if [ -n "$ACTUAL" ]; then
+            echo "FAIL: expected sarif-file to be empty for json format, got '$ACTUAL'"
             exit 1
           fi
           echo "PASS"

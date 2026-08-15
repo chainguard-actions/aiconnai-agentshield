@@ -1,4 +1,4 @@
-name: Test ignore-tests flag is passed to scanner
+name: Test basic SARIF scan with provided binary
 on:
   workflow_dispatch:
 
@@ -8,27 +8,22 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create fake agentshield binary that checks for --ignore-tests flag
+      - name: Create fake agentshield binary (no findings, SARIF output)
         run: |
           mkdir -p /tmp/fake-agentshield-bin
           cat > /tmp/fake-agentshield-bin/agentshield << 'FAKEEOF'
           #!/bin/sh
+          # Parse args to find --output flag
           OUTPUT=""
           FORMAT="console"
-          IGNORE_TESTS=0
           prev=""
           for arg in "$@"; do
-            case "$arg" in
-              --ignore-tests) IGNORE_TESTS=1 ;;
-            esac
             case "$prev" in
               --output|-o) OUTPUT="$arg" ;;
               --format)    FORMAT="$arg" ;;
             esac
             prev="$arg"
           done
-          # Write flag status to a known file for assertion
-          echo "$IGNORE_TESTS" > /tmp/agentshield-ignore-tests-flag.txt
           if [ "$FORMAT" = "sarif" ] && [ -n "$OUTPUT" ]; then
             cat > "$OUTPUT" << 'SARIF'
           {
@@ -54,7 +49,6 @@ jobs:
           format: 'sarif'
           fail-on: 'high'
           upload-sarif: 'false'
-          ignore-tests: 'true'
           binary-path: '/tmp/fake-agentshield-bin/agentshield'
 
       - name: Assert exit-code is 0
@@ -68,12 +62,28 @@ jobs:
           fi
           echo "PASS"
 
-      - name: Assert --ignore-tests flag was passed to binary
+      - name: Assert finding-count is 0
+        env:
+          ACTUAL: ${{ steps.action.outputs.finding-count }}
         run: |
-          FLAG=$(cat /tmp/agentshield-ignore-tests-flag.txt 2>/dev/null || echo "missing")
-          echo "ignore-tests flag received: $FLAG"
-          if [ "$FLAG" != "1" ]; then
-            echo "FAIL: expected --ignore-tests flag to be passed to agentshield binary, got '$FLAG'"
+          echo "actual finding-count: $ACTUAL"
+          if [ "$ACTUAL" != "0" ]; then
+            echo "FAIL: expected finding-count=0, got '$ACTUAL'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert sarif-file output is set
+        env:
+          ACTUAL: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "actual sarif-file: $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "FAIL: expected sarif-file to be non-empty"
+            exit 1
+          fi
+          if [ ! -f "$ACTUAL" ]; then
+            echo "FAIL: sarif-file '$ACTUAL' does not exist on disk"
             exit 1
           fi
           echo "PASS"

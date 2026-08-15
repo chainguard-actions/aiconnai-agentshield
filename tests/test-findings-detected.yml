@@ -1,4 +1,4 @@
-name: Test scan with findings detected
+name: Test scan with findings detected (exit-code 1)
 on:
   workflow_dispatch:
 
@@ -8,33 +8,36 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Create mock agentshield binary (findings found)
+      - name: Create fake agentshield binary (SARIF with 1 finding, exit 1)
         run: |
-          MOCK_BIN="$RUNNER_TEMP/mock-agentshield"
-          cat > "$MOCK_BIN" << 'EOF'
-          #!/usr/bin/env bash
-          # Mock agentshield: exits 1 (findings above threshold)
-          # If --output is passed, write a SARIF file with 2 findings
-          OUTPUT_FILE=""
-          while [[ $# -gt 0 ]]; do
-            if [[ "$1" == "--output" ]]; then
-              OUTPUT_FILE="$2"
-              shift 2
-            else
-              shift
-            fi
+          mkdir -p /tmp/fake-agentshield-bin
+          cat > /tmp/fake-agentshield-bin/agentshield << 'FAKEEOF'
+          #!/bin/sh
+          OUTPUT=""
+          FORMAT="console"
+          prev=""
+          for arg in "$@"; do
+            case "$prev" in
+              --output|-o) OUTPUT="$arg" ;;
+              --format)    FORMAT="$arg" ;;
+            esac
+            prev="$arg"
           done
-          if [ -n "$OUTPUT_FILE" ]; then
-            cat > "$OUTPUT_FILE" << 'SARIF'
+          if [ "$FORMAT" = "sarif" ] && [ -n "$OUTPUT" ]; then
+            cat > "$OUTPUT" << 'SARIF'
           {
             "version": "2.1.0",
             "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
             "runs": [
               {
-                "tool": {"driver": {"name": "AgentShield", "rules": []}},
+                "tool": { "driver": { "name": "AgentShield", "rules": [] } },
                 "results": [
-                  {"ruleId": "AS001", "message": {"text": "High severity finding 1"}},
-                  {"ruleId": "AS002", "message": {"text": "High severity finding 2"}}
+                  {
+                    "ruleId": "AS001",
+                    "level": "error",
+                    "message": { "text": "High severity finding" },
+                    "locations": []
+                  }
                 ]
               }
             ]
@@ -42,38 +45,48 @@ jobs:
           SARIF
           fi
           exit 1
-          EOF
-          chmod +x "$MOCK_BIN"
-          echo "MOCK_BIN=$MOCK_BIN" >> $GITHUB_ENV
+          FAKEEOF
+          chmod +x /tmp/fake-agentshield-bin/agentshield
 
       - id: action
         uses: .
         with:
           path: '.'
-          fail-on: 'high'
           format: 'sarif'
+          fail-on: 'high'
           upload-sarif: 'false'
-          binary-path: ${{ env.MOCK_BIN }}
+          binary-path: '/tmp/fake-agentshield-bin/agentshield'
         continue-on-error: true
 
-      - name: Assert exit-code is 1
+      - name: Assert exit-code is 1 (findings above threshold)
         env:
           ACTUAL: ${{ steps.action.outputs.exit-code }}
         run: |
           echo "actual exit-code: $ACTUAL"
           if [ "$ACTUAL" != "1" ]; then
-            echo "FAIL: expected exit-code '1', got '$ACTUAL'"
+            echo "FAIL: expected exit-code=1 (findings above threshold), got '$ACTUAL'"
             exit 1
           fi
           echo "PASS"
 
-      - name: Assert finding-count is 2
+      - name: Assert finding-count is 1
         env:
           ACTUAL: ${{ steps.action.outputs.finding-count }}
         run: |
           echo "actual finding-count: $ACTUAL"
-          if [ "$ACTUAL" != "2" ]; then
-            echo "FAIL: expected finding-count '2', got '$ACTUAL'"
+          if [ "$ACTUAL" != "1" ]; then
+            echo "FAIL: expected finding-count=1, got '$ACTUAL'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert action step outcome is failure
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "action outcome: $OUTCOME"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: expected action outcome=failure, got '$OUTCOME'"
             exit 1
           fi
           echo "PASS"
