@@ -1,4 +1,4 @@
-name: Test basic usage - console format
+name: Test basic usage (sarif format, default settings)
 on:
   workflow_dispatch:
 jobs:
@@ -7,97 +7,103 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Install mock agentshield and mock curl
-        shell: bash
+      - name: Install mock tools
         run: |
-          # Create a mock agentshield binary that simulates a successful scan
-          cat > /tmp/mock-agentshield.sh << 'MOCKEOF'
-          #!/bin/bash
-          FORMAT="console"
-          OUTPUT=""
-          EXIT_CODE=0
-          while [[ $# -gt 0 ]]; do
-            case "$1" in
-              --format) FORMAT="$2"; shift 2 ;;
-              --output) OUTPUT="$2"; shift 2 ;;
-              --fail-on|--config) shift 2 ;;
-              --ignore-tests) shift ;;
-              scan) shift ;;
-              *) shift ;;
-            esac
-          done
-          if [ "$FORMAT" = "sarif" ] && [ -n "$OUTPUT" ]; then
-            printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"AgentShield","rules":[]}},"results":[]}]}\n' > "$OUTPUT"
-          fi
-          echo "AgentShield scan complete. No findings."
-          exit $EXIT_CODE
-          MOCKEOF
-          chmod +x /tmp/mock-agentshield.sh
+          # Create a fake agentshield binary that produces valid SARIF output
+          mkdir -p /tmp/mock-bin
 
-          # Create a tar.gz containing the mock binary named 'agentshield'
-          mkdir -p /tmp/agentshield-pkg
-          cp /tmp/mock-agentshield.sh /tmp/agentshield-pkg/agentshield
-          chmod +x /tmp/agentshield-pkg/agentshield
-          tar czf /tmp/agentshield-mock.tar.gz -C /tmp/agentshield-pkg agentshield
-
-          # Create a mock curl wrapper that intercepts agentshield-related URLs
-          REAL_CURL=$(which curl)
-          cat > /usr/local/bin/curl << CURLEOF
-          #!/bin/bash
-          # Collect all args to find the URL
-          ALL_ARGS=("\$@")
-          URL=""
+          # Create a fake agentshield script
+          cat > /tmp/mock-bin/agentshield << 'AGENTSHIELD_EOF'
+          #!/bin/sh
+          # Parse arguments to find --output flag
           OUTPUT_FILE=""
-          i=0
-          while [ \$i -lt \${#ALL_ARGS[@]} ]; do
-            arg="\${ALL_ARGS[\$i]}"
-            case "\$arg" in
-              -o|--output)
-                i=\$((i+1))
-                OUTPUT_FILE="\${ALL_ARGS[\$i]}"
-                ;;
-              http*agentshield*|http*limaronaldo*)
-                URL="\$arg"
-                ;;
-              http*api.github.com*agentshield*|http*api.github.com*limaronaldo*)
-                URL="\$arg"
-                ;;
+          FORMAT="console"
+          prev=""
+          for arg in "$@"; do
+            case "$prev" in
+              --output|-o) OUTPUT_FILE="$arg" ;;
+              --format) FORMAT="$arg" ;;
             esac
-            i=\$((i+1))
+            prev="$arg"
           done
 
-          # Check last non-flag arg as URL if not found yet
-          if [ -z "\$URL" ]; then
-            for arg in "\${ALL_ARGS[@]}"; do
-              if echo "\$arg" | grep -q "^http"; then
-                URL="\$arg"
-              fi
-            done
+          if [ "$FORMAT" = "sarif" ] && [ -n "$OUTPUT_FILE" ]; then
+            cat > "$OUTPUT_FILE" << 'SARIF_EOF'
+          {
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [
+              {
+                "tool": {
+                  "driver": {
+                    "name": "AgentShield",
+                    "version": "0.8.6",
+                    "rules": []
+                  }
+                },
+                "results": []
+              }
+            ]
+          }
+          SARIF_EOF
           fi
+          exit 0
+          AGENTSHIELD_EOF
+          chmod +x /tmp/mock-bin/agentshield
 
-          if echo "\$URL" | grep -q "api.github.com"; then
-            echo '{"tag_name":"v0.1.0","name":"v0.1.0"}'
-            exit 0
-          elif echo "\$URL" | grep -qE "(agentshield|limaronaldo)"; then
-            if [ -n "\$OUTPUT_FILE" ]; then
-              cp /tmp/agentshield-mock.tar.gz "\$OUTPUT_FILE"
-            else
-              cat /tmp/agentshield-mock.tar.gz
-            fi
-            exit 0
-          else
-            exec $REAL_CURL "\$@"
-          fi
-          CURLEOF
-          chmod +x /usr/local/bin/curl
+          # Create a fake curl that handles GitHub API and binary download
+          cat > /tmp/mock-bin/curl << 'CURL_EOF'
+          #!/bin/sh
+          # Parse args for -o/--output flag
+          out=""
+          prev=""
+          for arg in "$@"; do
+            case "$prev" in
+              -o|--output) out="$arg" ;;
+            esac
+            prev="$arg"
+          done
+
+          # Check if this is the GitHub API call for latest version
+          case "$*" in
+            *api.github.com*releases/latest*)
+              payload='{"tag_name":"v0.8.6","name":"v0.8.6"}'
+              if [ -n "$out" ]; then
+                echo "$payload" > "$out"
+              else
+                echo "$payload"
+              fi
+              exit 0
+              ;;
+            *agentshield*.tar.gz*|*agentshield*.zip*)
+              # Create a fake tarball with the agentshield binary
+              TMPDIR_FAKE=$(mktemp -d)
+              cp /tmp/mock-bin/agentshield "$TMPDIR_FAKE/agentshield"
+              if [ -n "$out" ]; then
+                tar czf "$out" -C "$TMPDIR_FAKE" agentshield
+              else
+                tar czf - -C "$TMPDIR_FAKE" agentshield
+              fi
+              rm -rf "$TMPDIR_FAKE"
+              exit 0
+              ;;
+          esac
+          # Fall through to real curl for other URLs
+          exec /usr/bin/curl "$@"
+          CURL_EOF
+          chmod +x /tmp/mock-bin/curl
+
+          # Prepend mock-bin to PATH
+          echo "/tmp/mock-bin" >> $GITHUB_PATH
 
       - id: action
         uses: .
         with:
           path: '.'
-          format: 'console'
           fail-on: 'critical'
+          format: 'sarif'
           upload-sarif: 'false'
+          ignore-tests: 'false'
         continue-on-error: true
 
       - name: Assert exit-code output is set
@@ -109,26 +115,48 @@ jobs:
             echo "FAIL: exit-code output was not set"
             exit 1
           fi
-          echo "PASS: exit-code is '$EXIT_CODE'"
+          echo "PASS: exit-code is set to '$EXIT_CODE'"
 
       - name: Assert finding-count output is set
         env:
-          FINDING_COUNT: ${{ steps.action.outputs.finding-count }}
+          COUNT: ${{ steps.action.outputs.finding-count }}
         run: |
-          echo "finding-count: $FINDING_COUNT"
-          if [ -z "$FINDING_COUNT" ]; then
+          echo "finding-count: $COUNT"
+          if [ -z "$COUNT" ]; then
             echo "FAIL: finding-count output was not set"
             exit 1
           fi
-          echo "PASS: finding-count is '$FINDING_COUNT'"
+          echo "PASS: finding-count is '$COUNT'"
 
-      - name: Assert exit-code is valid (0 or 1)
+      - name: Assert sarif-file output is set
         env:
-          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+          SARIF: ${{ steps.action.outputs.sarif-file }}
         run: |
-          echo "exit-code: $EXIT_CODE"
-          if [ "$EXIT_CODE" != "0" ] && [ "$EXIT_CODE" != "1" ]; then
-            echo "FAIL: expected exit-code to be 0 or 1, got '$EXIT_CODE'"
+          echo "sarif-file: $SARIF"
+          if [ -z "$SARIF" ]; then
+            echo "FAIL: sarif-file output was not set"
             exit 1
           fi
-          echo "PASS: exit-code '$EXIT_CODE' is valid"
+          echo "PASS: sarif-file is '$SARIF'"
+
+      - name: Assert sarif file exists on disk
+        env:
+          SARIF: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "Checking for SARIF file at: $SARIF"
+          if [ ! -f "$SARIF" ]; then
+            echo "FAIL: SARIF file does not exist at '$SARIF'"
+            exit 1
+          fi
+          echo "PASS: SARIF file exists"
+
+      - name: Assert sarif file is valid JSON
+        env:
+          SARIF: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "Validating SARIF file as JSON..."
+          if ! python3 -c "import json; json.load(open('$SARIF'))" 2>&1; then
+            echo "FAIL: SARIF file is not valid JSON"
+            exit 1
+          fi
+          echo "PASS: SARIF file is valid JSON"

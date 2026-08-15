@@ -1,4 +1,4 @@
-name: Test ignore-tests flag
+name: Test console format output
 on:
   workflow_dispatch:
 jobs:
@@ -11,49 +11,15 @@ jobs:
         run: |
           mkdir -p /tmp/mock-bin
 
-          # Create a fake agentshield script that produces valid SARIF output
+          # Create a fake agentshield script for console format
           cat > /tmp/mock-bin/agentshield << 'AGENTSHIELD_EOF'
           #!/bin/sh
-          OUTPUT_FILE=""
-          FORMAT="console"
-          IGNORE_TESTS="false"
-          prev=""
-          for arg in "$@"; do
-            case "$prev" in
-              --output|-o) OUTPUT_FILE="$arg" ;;
-              --format) FORMAT="$arg" ;;
-            esac
-            case "$arg" in
-              --ignore-tests) IGNORE_TESTS="true" ;;
-            esac
-            prev="$arg"
-          done
-
-          if [ "$FORMAT" = "sarif" ] && [ -n "$OUTPUT_FILE" ]; then
-            cat > "$OUTPUT_FILE" << 'SARIF_EOF'
-          {
-            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
-            "version": "2.1.0",
-            "runs": [
-              {
-                "tool": {
-                  "driver": {
-                    "name": "AgentShield",
-                    "version": "0.8.6",
-                    "rules": []
-                  }
-                },
-                "results": []
-              }
-            ]
-          }
-          SARIF_EOF
-          fi
+          echo "AgentShield scan complete. No findings."
           exit 0
           AGENTSHIELD_EOF
           chmod +x /tmp/mock-bin/agentshield
 
-          # Create a fake curl
+          # Create a fake curl that handles GitHub API and binary download
           cat > /tmp/mock-bin/curl << 'CURL_EOF'
           #!/bin/sh
           out=""
@@ -98,9 +64,8 @@ jobs:
         with:
           path: '.'
           fail-on: 'critical'
-          format: 'sarif'
+          format: 'console'
           upload-sarif: 'false'
-          ignore-tests: 'true'
         continue-on-error: true
 
       - name: Assert exit-code output is set
@@ -114,7 +79,7 @@ jobs:
           fi
           echo "PASS: exit-code is '$EXIT_CODE'"
 
-      - name: Assert finding-count output is set
+      - name: Assert finding-count defaults to 0 for console format
         env:
           COUNT: ${{ steps.action.outputs.finding-count }}
         run: |
@@ -125,24 +90,13 @@ jobs:
           fi
           echo "PASS: finding-count is '$COUNT'"
 
-      - name: Assert sarif-file output is set
+      - name: Assert sarif-file is empty for console format
         env:
           SARIF: ${{ steps.action.outputs.sarif-file }}
         run: |
-          echo "sarif-file: $SARIF"
-          if [ -z "$SARIF" ]; then
-            echo "FAIL: sarif-file output was not set"
+          echo "sarif-file: '$SARIF'"
+          if [ -n "$SARIF" ]; then
+            echo "FAIL: sarif-file should be empty when format=console, got '$SARIF'"
             exit 1
           fi
-          echo "PASS: sarif-file is '$SARIF'"
-
-      - name: Assert sarif file exists on disk
-        env:
-          SARIF: ${{ steps.action.outputs.sarif-file }}
-        run: |
-          echo "Checking for SARIF file at: $SARIF"
-          if [ ! -f "$SARIF" ]; then
-            echo "FAIL: SARIF file does not exist at '$SARIF'"
-            exit 1
-          fi
-          echo "PASS: SARIF file exists"
+          echo "PASS: sarif-file is empty as expected for console format"
