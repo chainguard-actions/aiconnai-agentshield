@@ -1,0 +1,47 @@
+name: Test no adapter found with strict=false (non-blocking)
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Prepare fake agentshield binary (no adapter) from fixture
+        run: |
+          cp "$GITHUB_WORKSPACE/tests/fixtures/fake-agentshield-no-adapter.sh" /tmp/fake-agentshield-bin
+          chmod +x /tmp/fake-agentshield-bin
+          echo "Fake binary ready at /tmp/fake-agentshield-bin"
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          format: 'console'
+          fail-on: 'high'
+          upload-sarif: 'false'
+          strict: 'false'
+          binary-path: '/tmp/fake-agentshield-bin'
+
+      - name: Assert exit-code is 2 (scan error from binary)
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "2" ]; then
+            echo "FAIL: expected exit-code=2 but got '$EXIT_CODE'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert finding-count is 0
+        env:
+          COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $COUNT"
+          if [ "$COUNT" != "0" ]; then
+            echo "FAIL: expected finding-count=0 but got '$COUNT'"
+            exit 1
+          fi
+          echo "PASS"
