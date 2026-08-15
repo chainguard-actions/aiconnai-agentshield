@@ -1,4 +1,4 @@
-name: Test basic usage - console format
+name: Test ignore-tests flag
 on:
   workflow_dispatch:
 jobs:
@@ -11,23 +11,28 @@ jobs:
         run: |
           mkdir -p /tmp/fake-bin /tmp/fake-agentshield-dir
 
-          # Write the fake agentshield binary directly (no nested heredoc)
+          # Write the fake agentshield binary (no nested heredoc)
           FAKE_BIN=/tmp/fake-agentshield-dir/agentshield
           printf '%s\n' '#!/bin/sh' \
-            'FORMAT=console OUTPUT=""' \
+            'FORMAT=console OUTPUT="" IGNORE_TESTS=0' \
             'i=1' \
             'while [ $i -le $# ]; do' \
             '  eval "arg=\${$i}"' \
             '  case "$arg" in' \
             '    --format) i=$((i+1)); eval "FORMAT=\${$i}" ;;' \
             '    --output) i=$((i+1)); eval "OUTPUT=\${$i}" ;;' \
+            '    --ignore-tests) IGNORE_TESTS=1 ;;' \
             '  esac' \
             '  i=$((i+1))' \
             'done' \
             'if [ "$FORMAT" = "sarif" ] && [ -n "$OUTPUT" ]; then' \
             '  printf '"'"'{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"agentshield"}},"results":[]}]}\n'"'"' > "$OUTPUT"' \
             'fi' \
-            'echo "AgentShield scan complete. No findings."' \
+            'if [ "$IGNORE_TESTS" = "1" ]; then' \
+            '  echo "AgentShield scan complete (test files ignored). No findings."' \
+            'else' \
+            '  echo "AgentShield scan complete. No findings."' \
+            'fi' \
             'exit 0' > "$FAKE_BIN"
           chmod +x "$FAKE_BIN"
 
@@ -58,7 +63,7 @@ jobs:
           format: 'console'
           fail-on: 'critical'
           upload-sarif: 'false'
-          ignore-tests: 'false'
+          ignore-tests: 'true'
           version: 'v0.8.5'
         continue-on-error: true
 
@@ -77,12 +82,12 @@ jobs:
           fi
           echo "PASS: exit-code=$EXIT_CODE"
 
-      - name: Assert finding-count output is set
+      - name: Assert finding-count is 0 for console format
         env:
           COUNT: ${{ steps.action.outputs.finding-count }}
         run: |
           echo "finding-count: $COUNT"
-          # With console format (not sarif), finding-count should be 0
+          # With console format (not sarif), finding-count should always be 0
           if [ "$COUNT" != "0" ]; then
             echo "FAIL: expected finding-count=0 for console format, got: $COUNT"
             exit 1

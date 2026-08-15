@@ -1,4 +1,4 @@
-name: Test basic usage - console format
+name: Test fail-on threshold - critical only
 on:
   workflow_dispatch:
 jobs:
@@ -11,7 +11,7 @@ jobs:
         run: |
           mkdir -p /tmp/fake-bin /tmp/fake-agentshield-dir
 
-          # Write the fake agentshield binary directly (no nested heredoc)
+          # Write the fake agentshield binary (no nested heredoc)
           FAKE_BIN=/tmp/fake-agentshield-dir/agentshield
           printf '%s\n' '#!/bin/sh' \
             'FORMAT=console OUTPUT=""' \
@@ -55,36 +55,43 @@ jobs:
         uses: .
         with:
           path: '.'
-          format: 'console'
+          format: 'sarif'
           fail-on: 'critical'
           upload-sarif: 'false'
           ignore-tests: 'false'
           version: 'v0.8.5'
         continue-on-error: true
 
-      - name: Assert exit-code output is set
+      - name: Assert action completed (exit-code is set)
         env:
           EXIT_CODE: ${{ steps.action.outputs.exit-code }}
         run: |
           echo "exit-code: $EXIT_CODE"
           if [ -z "$EXIT_CODE" ]; then
-            echo "FAIL: exit-code output was not set"
+            echo "FAIL: exit-code output was not set — action may have errored during setup"
             exit 1
           fi
-          if [ "$EXIT_CODE" != "0" ] && [ "$EXIT_CODE" != "1" ] && [ "$EXIT_CODE" != "2" ]; then
-            echo "FAIL: unexpected exit-code value: $EXIT_CODE"
-            exit 1
-          fi
-          echo "PASS: exit-code=$EXIT_CODE"
+          echo "PASS: action completed with exit-code=$EXIT_CODE"
 
-      - name: Assert finding-count output is set
+      - name: Assert finding-count is a non-negative integer
         env:
           COUNT: ${{ steps.action.outputs.finding-count }}
         run: |
           echo "finding-count: $COUNT"
-          # With console format (not sarif), finding-count should be 0
-          if [ "$COUNT" != "0" ]; then
-            echo "FAIL: expected finding-count=0 for console format, got: $COUNT"
+          if ! echo "$COUNT" | grep -qE '^[0-9]+$'; then
+            echo "FAIL: finding-count is not a non-negative integer: $COUNT"
             exit 1
           fi
           echo "PASS: finding-count=$COUNT"
+
+      - name: Assert no critical findings (fake scan returns 0)
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          # Fake agentshield exits 0 (no findings), so action should pass
+          if [ "$EXIT_CODE" = "1" ]; then
+            echo "FAIL: unexpected findings reported by fake scanner"
+            exit 1
+          fi
+          echo "PASS: no critical findings (exit-code=$EXIT_CODE)"

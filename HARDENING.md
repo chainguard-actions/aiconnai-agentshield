@@ -8,70 +8,124 @@
 
 **Test Policy SHA:** `843adf9e4b8f85d0c08b27b9d0b09dd094b54702`
 
-**Harden Agent Version:** `1`
+**Harden Agent Version:** `2`
 
-Action **aiconnai--agentshield/v0.8.5** was hardened automatically. 13 finding(s) were identified and resolved across 2 iteration(s).
+Action **aiconnai--agentshield/v0.8.5** was hardened automatically. 17 finding(s) were identified and resolved across 3 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Multiple run: blocks in action.yml directly interpolate ${{ ... }} expressions inside shell command strings (rule a). This allows shell metacharacter injection before the shell ever quotes the values.
-
-Affected steps and offending lines:
-- 'Determine version' step: if [ "${{ inputs.version }}" = "latest" ] (line 57) and VERSION="${{ inputs.version }}" (line 62) — inputs.version is attacker-controlled.
-- 'Determine platform' step: case "${{ runner.os }}-${{ runner.arch }}" (line 68) and error echo with ${{ runner.os }}-${{ runner.arch }} (line 74).
-- 'Download AgentShield' step: VERSION="${{ steps.version.outputs.version }}" (line 79), TARGET="${{ steps.platform.outputs.target }}" (line 80), ${{ runner.temp }}/agentshield in unzip/mkdir/tar/chmod/echo lines (lines 85, 88, 89, 92, 93).
-- 'Run scan' step: ARGS="scan ${{ inputs.path }}" (line 97), ${{ inputs.fail-on }} (line 98), ${{ inputs.format }} (lines 101, 106), ${{ runner.temp }} (line 102), ${{ inputs.config }} (lines 109-110), ${{ inputs.ignore-tests }} (line 113).
-- 'Check result' step: '${{ inputs.fail-on }}' (line 147).
-
-All ${{ inputs.* }} values are attacker-controllable. All ${{ steps.*.outputs.* }} and ${{ runner.* }} values flow through YAML template substitution before the shell processes them. None are routed through env vars before use in the shell.
+Multiple ${{ }} expressions are directly interpolated inside run: shell command strings in action.yml, violating sub-rule (a). User-controlled inputs (inputs.version, inputs.path, inputs.fail-on, inputs.format, inputs.config, inputs.ignore-tests) and runner/step contexts (runner.os, runner.arch, runner.temp, steps.version.outputs.version, steps.platform.outputs.target) are all interpolated before the shell sees them, enabling command injection by any caller of this composite action. Offending lines include: `if [ "${{ inputs.version }}" = "latest" ]`, `VERSION="${{ inputs.version }}"`, `case "${{ runner.os }}-${{ runner.arch }}"`, `ARGS="scan ${{ inputs.path }}"`, `ARGS="$ARGS --fail-on ${{ inputs.fail-on }}"`, `ARGS="$ARGS --format ${{ inputs.format }}"`, `ARGS="$ARGS --config ${{ inputs.config }}"`, `echo "${{ runner.temp }}/agentshield" >> $GITHUB_PATH`.
 
 Locations:
 
-- `action.yml:57`
-- `action.yml:62`
+- `action.yml:56`
+- `action.yml:60`
 - `action.yml:68`
-- `action.yml:74`
+- `action.yml:78`
 - `action.yml:79`
-- `action.yml:80`
-- `action.yml:85`
-- `action.yml:88`
+- `action.yml:84`
 - `action.yml:89`
-- `action.yml:92`
-- `action.yml:93`
 - `action.yml:97`
 - `action.yml:98`
-- `action.yml:101`
 - `action.yml:102`
 - `action.yml:106`
-- `action.yml:109`
-- `action.yml:110`
-- `action.yml:113`
-- `action.yml:147`
+- `action.yml:130`
+
+### script-injection (severity: high)
+
+Multiple ${{ }} expressions are directly interpolated inside run: shell command strings in release.yml, violating sub-rule (a). matrix.target and github.ref_name are interpolated directly in shell commands: `cargo build --release --target ${{ matrix.target }}`, `target/${{ matrix.target }}/release/agentshield --help | grep wrap`, `BINARY=target/${{ matrix.target }}/release/agentshield`, `ARCHIVE=agentshield-${{ github.ref_name }}-${{ matrix.target }}.tar.gz`, and equivalent Windows PowerShell variants.
+
+Locations:
+
+- `.github/workflows/release.yml:57`
+- `.github/workflows/release.yml:61`
+- `.github/workflows/release.yml:65`
+- `.github/workflows/release.yml:71`
+- `.github/workflows/release.yml:76`
+- `.github/workflows/release.yml:77`
+- `.github/workflows/release.yml:84`
+- `.github/workflows/release.yml:85`
+
+### script-injection (severity: high)
+
+A ${{ steps.build.outputs.digest }} expression is directly interpolated inside a run: shell command string in docker.yml, violating sub-rule (a). The steps.*.outputs.* context flows through YAML template substitution before the shell sees it. Offending line: `digest="${{ steps.build.outputs.digest }}"`
+
+Locations:
+
+- `.github/workflows/docker.yml:79`
 
 ### github-env-injection (severity: high)
 
-Two run: blocks write values derived from workflow-controlled expressions to special GitHub environment files without the required sanitization step (printf '%s' ... | tr -d '\n\r').
-
-1. 'Download AgentShield' step (line 93): echo "${{ runner.temp }}/agentshield" >> $GITHUB_PATH — the value of ${{ runner.temp }} is interpolated directly and written to GITHUB_PATH without sanitization.
-
-2. 'Run scan' step (line 127): echo "sarif-file=$SARIF_FILE" >> $GITHUB_OUTPUT — SARIF_FILE was set to "${{ runner.temp }}/agentshield-results.sarif" (line 102), so it carries the unsanitized runner.temp value into GITHUB_OUTPUT.
-
-Neither write is preceded by the required printf '%s' ... | tr -d '\n\r' sanitization pipeline.
+In action.yml, values derived from user-controlled inputs are written to GITHUB_OUTPUT and GITHUB_PATH without the required sanitization step (printf '%s' ... | tr -d '\n\r'). (1) Step 'Determine version': VERSION is set from ${{ inputs.version }} via direct shell interpolation, then `echo "version=$VERSION" >> $GITHUB_OUTPUT` — no sanitization. (2) Step 'Determine platform': TARGET is computed from ${{ runner.os }}-${{ runner.arch }}, then `echo "target=$TARGET" >> $GITHUB_OUTPUT` — no sanitization. (3) Step 'Download AgentShield': `echo "${{ runner.temp }}/agentshield" >> $GITHUB_PATH` — direct expression write to GITHUB_PATH. (4) Step 'Run scan': SARIF_FILE is derived from ${{ runner.temp }} and written to GITHUB_OUTPUT without sanitization.
 
 Locations:
 
-- `action.yml:93`
-- `action.yml:127`
+- `action.yml:63`
+- `action.yml:73`
+- `action.yml:91`
+- `action.yml:116`
+- `action.yml:117`
+- `action.yml:122`
+
+### github-env-injection (severity: high)
+
+In release.yml 'Package (unix)' step, ARCHIVE is constructed from ${{ github.ref_name }} and ${{ matrix.target }} via direct shell interpolation, then written to GITHUB_ENV without sanitization: `echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV`. A tag name containing newline characters could inject arbitrary environment variables into subsequent steps.
+
+Locations:
+
+- `.github/workflows/release.yml:79`
 
 ### unpinned-uses (severity: high)
 
-The composite action step 'Upload SARIF to GitHub Code Scanning' references github/codeql-action/upload-sarif@v3 using a mutable tag (v3) instead of a full 40-character commit SHA. A tag can be moved to point to a different (potentially malicious) commit, enabling a supply-chain attack. Fix: pin to a specific commit SHA, e.g. uses: github/codeql-action/upload-sarif@<40-char-sha> # v3
+All uses: references across action.yml and all workflow files use mutable tag/version strings instead of immutable 40-character SHA digests, making the action vulnerable to supply-chain attacks if any referenced action's tag is moved or the action is compromised.
+
+action.yml: github/codeql-action/upload-sarif@v3
+
+ci.yml: actions/checkout@v6, dtolnay/rust-toolchain@stable, Swatinem/rust-cache@v2
+
+action-e2e.yml: actions/checkout@v4, dtolnay/rust-toolchain@stable, Swatinem/rust-cache@v2, github/codeql-action/upload-sarif@v3
+
+docker.yml: actions/checkout@v6, docker/metadata-action@v6, docker/login-action@v4, docker/setup-buildx-action@v4, docker/build-push-action@v7, actions/upload-artifact@v7, actions/download-artifact@v7
+
+release.yml: actions/checkout@v6, dtolnay/rust-toolchain@stable, Swatinem/rust-cache@v2, actions/upload-artifact@v7, actions/download-artifact@v7, softprops/action-gh-release@v3, docker/setup-qemu-action@v3, docker/setup-buildx-action@v3, docker/login-action@v3, docker/build-push-action@v6
 
 Locations:
 
-- `action.yml:140`
+- `action.yml:138`
+- `.github/workflows/ci.yml:16`
+- `.github/workflows/ci.yml:17`
+- `.github/workflows/ci.yml:18`
+- `.github/workflows/action-e2e.yml:22`
+- `.github/workflows/action-e2e.yml:25`
+- `.github/workflows/action-e2e.yml:26`
+- `.github/workflows/action-e2e.yml:161`
+- `.github/workflows/docker.yml:18`
+- `.github/workflows/docker.yml:37`
+- `.github/workflows/docker.yml:60`
+- `.github/workflows/docker.yml:65`
+- `.github/workflows/docker.yml:70`
+- `.github/workflows/docker.yml:91`
+- `.github/workflows/docker.yml:101`
+- `.github/workflows/release.yml:18`
+- `.github/workflows/release.yml:44`
+- `.github/workflows/release.yml:47`
+- `.github/workflows/release.yml:100`
+- `.github/workflows/release.yml:107`
+- `.github/workflows/release.yml:113`
+- `.github/workflows/release.yml:131`
+- `.github/workflows/release.yml:135`
+- `.github/workflows/release.yml:139`
+- `.github/workflows/release.yml:143`
+
+### missing-permissions (severity: medium)
+
+ci.yml has no top-level permissions: block and none of its four jobs (test, clippy, fmt, smoke) define job-level permissions. The workflow therefore runs with GitHub's default token permissions, which include write access to contents on push events. All jobs should declare explicit minimal permissions.
+
+Locations:
+
+- `.github/workflows/ci.yml:1`
 
 ### static-inline-injection (severity: high)
 
@@ -157,14 +211,25 @@ Locations:
 
 ### Iteration 1
 
-**Fixes applied:** script-injection, static-inline-injection, github-env-injection, unpinned-uses
+**Fixes applied:** script-injection, github-env-injection, unpinned-uses, missing-permissions, static-inline-injection
 
 **Notes:**
 
-Rewrote action.yml to fix all findings:
-1. script-injection / static-inline-injection: Moved all ${{ inputs.* }}, ${{ runner.* }}, and ${{ steps.*.outputs.* }} expressions from run: blocks into env: blocks for each step (Determine version, Determine platform, Download AgentShield, Run scan, Check result). Shell scripts now reference plain env vars.
-2. github-env-injection: Added printf '%s' ... | tr -d '\n\r' sanitization before writing to $GITHUB_PATH (runner.temp path in Download AgentShield) and $GITHUB_OUTPUT (sarif-file in Run scan, version in Determine version).
-3. unpinned-uses: Pinned github/codeql-action/upload-sarif@v3 to full SHA dd903d2e4f5405488e5ef1422510ee31c8b32357 with # v3 comment.
+Fixed all findings across action.yml, .github/workflows/ci.yml, .github/workflows/docker.yml, .github/workflows/release.yml, and .github/workflows/action-e2e.yml:
+
+1. script-injection & static-inline-injection (action.yml): Moved all ${{ inputs.* }}, ${{ runner.* }}, and ${{ steps.*.outputs.* }} expressions from run: blocks into env: blocks. Shell scripts now reference plain $VAR_NAME environment variables.
+
+2. script-injection (release.yml): Moved ${{ matrix.target }} and ${{ github.ref_name }} from run: blocks into env: blocks (MATRIX_TARGET, REF_NAME).
+
+3. script-injection (docker.yml): Moved ${{ steps.build.outputs.digest }} and ${{ needs.metadata.outputs.json }} from run: blocks into env: blocks (BUILD_DIGEST, METADATA_JSON).
+
+4. github-env-injection (action.yml): All values written to GITHUB_OUTPUT and GITHUB_PATH are sanitized with `printf '%s' ... | tr -d '\n\r'` before writing.
+
+5. github-env-injection (release.yml): ARCHIVE value written to GITHUB_ENV is sanitized with `printf '%s' ... | tr -d '\n\r'`.
+
+6. unpinned-uses: All action references pinned to full SHA digests with tag comments: actions/checkout@v4→11d5960a, actions/checkout@v6→d23441a4, dtolnay/rust-toolchain@stable→4cda84d5, Swatinem/rust-cache@v2→e18b4977, github/codeql-action/upload-sarif@v3→b7351df7, docker/metadata-action@v6→dc802804, docker/login-action@v4→af1e73f9, docker/setup-buildx-action@v4→bb05f3f5, docker/build-push-action@v7→53b7df96, actions/upload-artifact@v7→043fb46d, actions/download-artifact@v7→37930b1c, softprops/action-gh-release@v3→3d0d9888, docker/setup-qemu-action@v3→c7c53464, docker/setup-buildx-action@v3→8d2750c6, docker/login-action@v3→c94ce9fb, docker/build-push-action@v6→10e90e36.
+
+7. missing-permissions (ci.yml): Added top-level `permissions: contents: read` block.
 
 ### Iteration 2
 
@@ -172,5 +237,14 @@ Rewrote action.yml to fix all findings:
 
 **Notes:**
 
-Fixed script injection in the 'Run scan' step of action.yml. Replaced the string-based ARGS variable (which concatenated unquoted user-controlled inputs and was invoked unquoted as `agentshield $ARGS`) with a bash array. Each user-controlled input (INPUT_PATH, INPUT_FAIL_ON, INPUT_FORMAT, INPUT_CONFIG) is now added to the array as a properly double-quoted element, and the command is invoked as `agentshield "${args[@]}"`. This prevents word-splitting, glob expansion, and shell metacharacter injection from any of the four affected inputs.
+Fixed the script injection vulnerability in the 'Run scan' step of action.yml. Replaced the string-based $ARGS construction (where user-controlled inputs were concatenated unquoted and then expanded with `agentshield $ARGS`) with a bash array approach. Each argument is now added to the array with proper double-quoting (e.g., `ARGS=("scan" "$INPUT_PATH")`, `ARGS+=("--fail-on" "$INPUT_FAIL_ON")`), and the command is invoked as `agentshield "${ARGS[@]}"`. This ensures each argument is treated as a separate, properly-quoted word, preventing word splitting, glob expansion, and shell metacharacter injection from attacker-controlled values like inputs.path, inputs.fail-on, inputs.format, and inputs.config.
+
+### Iteration 3
+
+**Fixes applied:** github-env-injection, script-injection
+
+**Notes:**
+
+1. release.yml Package (windows) step: Added PowerShell newline-stripping sanitization using `-replace` before writing ARCHIVE to GITHUB_ENV. The value is now stored in `$safe_archive` with CR and LF stripped before being written to the environment file.
+2. docker.yml Create and push manifest list step: Replaced the unquoted `$tags` expansion (built via `jq | xargs`) with a bash array approach. Tags are read one-by-one from `jq -r '.tags[]'` into a `tag_args` array as `-t "$tag"` pairs, and sources are also built into an array. The docker command uses `"${tag_args[@]}" "${sources[@]}"` for safe, properly-quoted expansion that prevents shell metacharacter injection.
 
