@@ -17,6 +17,7 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 | v0.9.0 | [`v0.9.0`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.9.0) | [`faf2923`](https://github.com/aiconnai/agentshield/commit/faf2923cb94d1f89ad649ab12ac80544fc626016) |
 | v0.9.1 | [`v0.9.1`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.9.1) | [`cad2c40`](https://github.com/aiconnai/agentshield/commit/cad2c40f4d474e21e9e365d9c0249ccc21cbe347) |
 | v0.9.3 | [`v0.9.3`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.9.3) | [`80a16f2`](https://github.com/aiconnai/agentshield/commit/80a16f2f53e03cd1200a51ae89704e324d511cc9) |
+| v1.0.0 | [`v1.0.0`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v1.0.0) | [`a515977`](https://github.com/aiconnai/agentshield/commit/a5159774b8168daf73150b5c2f16ac5c8d83558c) |
 
 ## Privacy
 
