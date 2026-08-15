@@ -1,4 +1,4 @@
-name: Test ignore-tests flag
+name: Test JSON output format
 on:
   workflow_dispatch:
 jobs:
@@ -20,9 +20,8 @@ jobs:
         with:
           path: '.'
           fail-on: 'critical'
-          format: 'sarif'
+          format: 'json'
           upload-sarif: 'false'
-          ignore-tests: 'true'
         continue-on-error: true
 
       - name: Assert exit-code is a valid value
@@ -36,24 +35,24 @@ jobs:
           fi
           echo "PASS: exit-code is valid: $EXIT_CODE"
 
-      - name: Assert finding-count is a number
+      - name: Assert sarif-file is empty for JSON format
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "sarif-file: '$SARIF_FILE'"
+          if [ -n "$SARIF_FILE" ]; then
+            echo "FAIL: sarif-file should be empty when format=json, got: $SARIF_FILE"
+            exit 1
+          fi
+          echo "PASS: sarif-file is empty as expected for JSON format"
+
+      - name: Assert finding-count is 0 for non-SARIF format
         env:
           COUNT: ${{ steps.action.outputs.finding-count }}
         run: |
           echo "finding-count: $COUNT"
-          if ! echo "$COUNT" | grep -qE '^[0-9]+$'; then
-            echo "FAIL: finding-count '$COUNT' is not a non-negative integer"
+          if [ "$COUNT" != "0" ]; then
+            echo "FAIL: finding-count should be 0 when format=json (no SARIF to parse), got: $COUNT"
             exit 1
           fi
-          echo "PASS: finding-count is a valid number: $COUNT"
-
-      - name: Assert sarif-file output is set
-        env:
-          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
-        run: |
-          echo "sarif-file: $SARIF_FILE"
-          if [ -z "$SARIF_FILE" ]; then
-            echo "FAIL: sarif-file output is empty when format=sarif"
-            exit 1
-          fi
-          echo "PASS: sarif-file output is set: $SARIF_FILE"
+          echo "PASS: finding-count is 0 as expected for JSON format"

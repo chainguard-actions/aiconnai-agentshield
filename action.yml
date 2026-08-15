@@ -79,7 +79,7 @@ runs:
           VERSION="$INPUT_VERSION"
         fi
         safe_version=$(printf '%s' "$VERSION" | tr -d '\n\r')
-        echo "version=$safe_version" >> "$GITHUB_OUTPUT"
+        echo "version=$safe_version" >> $GITHUB_OUTPUT
     - name: Determine platform
       id: platform
       shell: bash
@@ -101,7 +101,7 @@ runs:
       env:
         STEP_VERSION: ${{ steps.version.outputs.version }}
         STEP_TARGET: ${{ steps.platform.outputs.target }}
-        RUNNER_TEMP_DIR: ${{ runner.temp }}
+        RUNNER_TEMP: ${{ runner.temp }}
       run: |
         VERSION="$STEP_VERSION"
         TARGET="$STEP_TARGET"
@@ -110,16 +110,16 @@ runs:
         if [[ "$TARGET" == *"windows"* ]]; then
           ARCHIVE="agentshield-${VERSION}-${TARGET}.zip"
           curl -fsSL "${BASE_URL}/${ARCHIVE}" -o agentshield.zip
-          unzip -o agentshield.zip -d "$RUNNER_TEMP_DIR/agentshield"
+          unzip -o agentshield.zip -d "$RUNNER_TEMP/agentshield"
         else
           ARCHIVE="agentshield-${VERSION}-${TARGET}.tar.gz"
           curl -fsSL "${BASE_URL}/${ARCHIVE}" -o agentshield.tar.gz
-          mkdir -p "$RUNNER_TEMP_DIR/agentshield"
-          tar xzf agentshield.tar.gz -C "$RUNNER_TEMP_DIR/agentshield"
+          mkdir -p "$RUNNER_TEMP/agentshield"
+          tar xzf agentshield.tar.gz -C "$RUNNER_TEMP/agentshield"
         fi
 
-        chmod +x "$RUNNER_TEMP_DIR/agentshield/agentshield"* 2>/dev/null || true
-        safe_path=$(printf '%s' "$RUNNER_TEMP_DIR/agentshield" | tr -d '\n\r')
+        chmod +x "$RUNNER_TEMP/agentshield/agentshield"* 2>/dev/null || true
+        safe_path=$(printf '%s' "$RUNNER_TEMP/agentshield" | tr -d '\n\r')
         echo "$safe_path" >> $GITHUB_PATH
     - name: Run scan
       id: scan
@@ -130,25 +130,24 @@ runs:
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_CONFIG: ${{ inputs.config }}
         INPUT_IGNORE_TESTS: ${{ inputs.ignore-tests }}
-        RUNNER_TEMP_DIR: ${{ runner.temp }}
+        RUNNER_TEMP: ${{ runner.temp }}
       run: |
-        ARGS=("scan" "$INPUT_PATH")
-        ARGS+=("--fail-on" "$INPUT_FAIL_ON")
+        ARGS=(scan "$INPUT_PATH" --fail-on "$INPUT_FAIL_ON")
 
         SARIF_FILE=""
         if [ "$INPUT_FORMAT" = "sarif" ]; then
-          SARIF_FILE="$RUNNER_TEMP_DIR/agentshield-results.sarif"
-          ARGS+=("--format" "sarif" "--output" "$SARIF_FILE")
+          SARIF_FILE="$RUNNER_TEMP/agentshield-results.sarif"
+          ARGS+=(--format sarif --output "$SARIF_FILE")
         else
-          ARGS+=("--format" "$INPUT_FORMAT")
+          ARGS+=(--format "$INPUT_FORMAT")
         fi
 
         if [ -n "$INPUT_CONFIG" ]; then
-          ARGS+=("--config" "$INPUT_CONFIG")
+          ARGS+=(--config "$INPUT_CONFIG")
         fi
 
         if [ "$INPUT_IGNORE_TESTS" = "true" ]; then
-          ARGS+=("--ignore-tests")
+          ARGS+=(--ignore-tests)
         fi
 
         set +e
@@ -156,9 +155,9 @@ runs:
         EXIT_CODE=$?
         set -e
 
-        echo "exit-code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+        echo "exit-code=$EXIT_CODE" >> $GITHUB_OUTPUT
         safe_sarif=$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')
-        echo "sarif-file=$safe_sarif" >> "$GITHUB_OUTPUT"
+        echo "sarif-file=$safe_sarif" >> $GITHUB_OUTPUT
 
         # Count findings from SARIF if available
         if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
@@ -172,7 +171,7 @@ runs:
         echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> $GITHUB_ENV
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.scan.outputs.sarif-file != ''
-      uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
+      uses: github/codeql-action/upload-sarif@4187e74d05793876e9989daffde9c3e66b4acd07 # v3
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: agentshield
