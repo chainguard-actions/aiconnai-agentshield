@@ -1,0 +1,47 @@
+name: Test no adapter found with strict=true (blocking)
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Prepare fake agentshield binary (no adapter)
+        run: |
+          cp "$GITHUB_WORKSPACE/tests/fixtures/fake-agentshield-no-adapter.sh" /tmp/fake-agentshield-no-adapter-strict
+          chmod +x /tmp/fake-agentshield-no-adapter-strict
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          fail-on: 'high'
+          format: 'sarif'
+          upload-sarif: 'false'
+          strict: 'true'
+          binary-path: '/tmp/fake-agentshield-no-adapter-strict'
+        continue-on-error: true
+
+      - name: Assert action failed (strict=true with no adapter is blocking)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: expected action to fail with strict=true and no adapter, got '$OUTCOME'"
+            exit 1
+          fi
+          echo "PASS: action correctly failed when strict=true and no adapter found"
+
+      - name: Assert exit-code is 2
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "2" ]; then
+            echo "FAIL: expected exit-code=2 (error from agentshield), got '$EXIT_CODE'"
+            exit 1
+          fi
+          echo "PASS"

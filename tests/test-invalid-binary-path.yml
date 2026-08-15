@@ -1,0 +1,35 @@
+name: Test invalid binary-path causes error
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a non-executable file to use as invalid binary
+        run: |
+          echo "not a binary" > /tmp/not-executable-agentshield
+          # Deliberately NOT chmod +x — leave it non-executable
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          fail-on: 'high'
+          format: 'sarif'
+          upload-sarif: 'false'
+          binary-path: '/tmp/not-executable-agentshield'
+        continue-on-error: true
+
+      - name: Assert action failed (non-executable binary should cause error)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: expected action to fail with non-executable binary, got '$OUTCOME'"
+            exit 1
+          fi
+          echo "PASS: action correctly failed with non-executable binary"

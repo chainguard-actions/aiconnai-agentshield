@@ -1,0 +1,58 @@
+name: Test scan with findings - action should fail
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Prepare fake agentshield binary (returns findings)
+        run: |
+          cp "$GITHUB_WORKSPACE/tests/fixtures/fake-agentshield-fail.sh" /tmp/fake-agentshield-fail
+          chmod +x /tmp/fake-agentshield-fail
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          fail-on: 'high'
+          format: 'sarif'
+          upload-sarif: 'false'
+          strict: 'true'
+          binary-path: '/tmp/fake-agentshield-fail'
+        continue-on-error: true
+
+      - name: Assert action failed (findings above threshold)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: expected action to fail when findings are detected, got '$OUTCOME'"
+            exit 1
+          fi
+          echo "PASS: action correctly failed when findings were detected"
+
+      - name: Assert exit-code is 1
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "1" ]; then
+            echo "FAIL: expected exit-code=1, got '$EXIT_CODE'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert finding-count is 1
+        env:
+          COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $COUNT"
+          if [ "$COUNT" != "1" ]; then
+            echo "FAIL: expected finding-count=1, got '$COUNT'"
+            exit 1
+          fi
+          echo "PASS"

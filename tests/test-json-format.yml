@@ -1,0 +1,62 @@
+name: Test JSON output format
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Prepare fake agentshield binary (json output, no findings)
+        run: |
+          cat > /tmp/fake-agentshield-json << 'EOF'
+          #!/bin/sh
+          # Fake agentshield for JSON format - exits 0 (no findings)
+          echo '{"findings":[],"summary":{"total":0}}'
+          exit 0
+          EOF
+          chmod +x /tmp/fake-agentshield-json
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          fail-on: 'high'
+          format: 'json'
+          upload-sarif: 'false'
+          strict: 'true'
+          binary-path: '/tmp/fake-agentshield-json'
+
+      - name: Assert exit-code is 0
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "FAIL: expected exit-code=0, got '$EXIT_CODE'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert finding-count is 0 (no SARIF file for json format)
+        env:
+          COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $COUNT"
+          if [ "$COUNT" != "0" ]; then
+            echo "FAIL: expected finding-count=0 for json format, got '$COUNT'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert sarif-file is empty (json format produces no SARIF)
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "sarif-file: '$SARIF_FILE'"
+          if [ -n "$SARIF_FILE" ]; then
+            echo "FAIL: expected sarif-file to be empty for json format, got '$SARIF_FILE'"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,0 +1,57 @@
+name: Test console output format
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Prepare fake agentshield binary (console output)
+        run: |
+          cp "$GITHUB_WORKSPACE/tests/fixtures/fake-agentshield-console.sh" /tmp/fake-agentshield-console
+          chmod +x /tmp/fake-agentshield-console
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          fail-on: 'high'
+          format: 'console'
+          upload-sarif: 'false'
+          strict: 'true'
+          binary-path: '/tmp/fake-agentshield-console'
+
+      - name: Assert exit-code is 0
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "FAIL: expected exit-code=0, got '$EXIT_CODE'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert finding-count is 0 (no SARIF, defaults to 0)
+        env:
+          COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $COUNT"
+          if [ "$COUNT" != "0" ]; then
+            echo "FAIL: expected finding-count=0 for console format, got '$COUNT'"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Assert sarif-file output is empty (console format produces no SARIF)
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "sarif-file: '$SARIF_FILE'"
+          if [ -n "$SARIF_FILE" ]; then
+            echo "FAIL: expected sarif-file to be empty for console format, got '$SARIF_FILE'"
+            exit 1
+          fi
+          echo "PASS"
