@@ -1,0 +1,103 @@
+name: Test SARIF format output
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fake agentshield binary (sarif output)
+        run: |
+          mkdir -p /tmp/fake-agentshield-bin
+          cat > /tmp/fake-agentshield-bin/agentshield << 'SCRIPT'
+          #!/bin/sh
+          # Fake agentshield binary: writes a minimal SARIF file when --output is given
+          OUTPUT_FILE=""
+          prev=""
+          for arg in "$@"; do
+            case "$prev" in
+              --output) OUTPUT_FILE="$arg" ;;
+            esac
+            prev="$arg"
+          done
+
+          if [ -n "$OUTPUT_FILE" ]; then
+            cat > "$OUTPUT_FILE" << 'SARIF'
+          {
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [
+              {
+                "tool": {
+                  "driver": {
+                    "name": "AgentShield",
+                    "version": "0.0.0-fake"
+                  }
+                },
+                "results": []
+              }
+            ]
+          }
+          SARIF
+          fi
+
+          echo "AgentShield scan complete. No findings detected."
+          exit 0
+          SCRIPT
+          chmod +x /tmp/fake-agentshield-bin/agentshield
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          binary-path: '/tmp/fake-agentshield-bin/agentshield'
+          strict: 'true'
+          upload-sarif: 'false'
+          format: 'sarif'
+          fail-on: 'high'
+
+      - name: Assert sarif-file output is set
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "sarif-file: $SARIF_FILE"
+          if [ -z "$SARIF_FILE" ]; then
+            echo "FAIL: sarif-file output is empty"
+            exit 1
+          fi
+          echo "PASS: sarif-file is '$SARIF_FILE'"
+
+      - name: Assert sarif file exists and is valid JSON
+        env:
+          SARIF_FILE: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "Checking SARIF file: $SARIF_FILE"
+          if [ ! -f "$SARIF_FILE" ]; then
+            echo "FAIL: SARIF file does not exist at '$SARIF_FILE'"
+            exit 1
+          fi
+          python3 -c "import json; data=json.load(open('$SARIF_FILE')); print('SARIF version:', data.get('version', 'unknown'))"
+          echo "PASS: SARIF file exists and is valid JSON"
+
+      - name: Assert finding-count is 0
+        env:
+          FINDING_COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $FINDING_COUNT"
+          if [ "$FINDING_COUNT" != "0" ]; then
+            echo "FAIL: expected finding-count=0 but got '$FINDING_COUNT'"
+            exit 1
+          fi
+          echo "PASS: finding-count is 0"
+
+      - name: Assert exit-code is 0
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "FAIL: expected exit-code=0 but got '$EXIT_CODE'"
+            exit 1
+          fi
+          echo "PASS: exit-code is 0"

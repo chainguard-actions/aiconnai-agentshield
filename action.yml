@@ -1,0 +1,308 @@
+name: 'AgentShield Security Scanner'
+description: 'Scan supported AI agent extension frameworks for security vulnerabilities'
+author: 'AgentShield Contributors'
+branding:
+  icon: 'shield'
+  color: 'blue'
+inputs:
+  path:
+    description: 'Path to scan (relative to repo root)'
+    required: false
+    default: '.'
+  fail-on:
+    description: 'Minimum severity to fail the check (info, low, medium, high, critical)'
+    required: false
+    default: 'high'
+  format:
+    description: 'Output format (console, json, sarif)'
+    required: false
+    default: 'sarif'
+  config:
+    description: 'Path to .agentshield.toml config file'
+    required: false
+    default: ''
+  baseline:
+    description: 'Path to an AgentShield baseline file for known findings'
+    required: false
+    default: ''
+  upload-sarif:
+    description: 'Upload SARIF results to GitHub Code Scanning'
+    required: false
+    default: 'true'
+  ignore-tests:
+    description: 'Skip test files (test/, tests/, __tests__/, *.test.ts, *.spec.ts, etc.)'
+    required: false
+    default: 'false'
+  strict:
+    description: 'Fail when no supported adapter is found; false makes only that discovery error non-blocking'
+    required: false
+    default: 'true'
+  version:
+    description: 'AgentShield version to use (default: latest). Accepts a version with or without a "v" prefix, e.g. v0.8.0 or 0.8.0.'
+    required: false
+    default: 'latest'
+  binary-path:
+    description: 'Path to an existing AgentShield binary; skips release download when set'
+    required: false
+    default: ''
+  comment-pr:
+    description: 'Post an automated security summary comment on Pull Requests (requires GITHUB_TOKEN)'
+    required: false
+    default: 'false'
+  github-token:
+    description: 'GitHub token for PR commenting and API authentication'
+    required: false
+    default: ${{ github.token }}
+outputs:
+  finding-count:
+    description: 'Number of findings detected'
+    value: ${{ steps.scan.outputs.finding-count }}
+  sarif-file:
+    description: 'Path to the SARIF output file (if format=sarif)'
+    value: ${{ steps.scan.outputs.sarif-file }}
+  exit-code:
+    description: 'Exit code from the scan (0=pass, 1=fail, 2=error)'
+    value: ${{ steps.scan.outputs.exit-code }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Chainguard usage telemetry
+      shell: bash
+      run: |
+        # Best-effort, fails open. Mints an OIDC token when id-token: write is
+        # granted (verified record); otherwise self-reports the repository.
+        tok=""
+        if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+          tok=$(curl -sf --max-time 2 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=actions.chainguard.dev" \
+            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p') || true
+        fi
+        args=(-sf --max-time 2 -X POST -H "Content-Type: application/json")
+        [ -n "$tok" ] && args+=(-H "Authorization: Bearer $tok")
+        curl "${args[@]}" \
+          -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
+          "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
+    - name: Determine version
+      if: inputs.binary-path == ''
+      id: version
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        if [ "$INPUT_VERSION" = "latest" ]; then
+          VERSION=$(
+            curl -fsSL https://api.github.com/repos/aiconnai/agentshield/releases/latest 2>/dev/null \
+              | sed -nE 's/.*"tag_name": *"([^"]+)".*/\1/p' \
+              | head -n 1 || true
+          )
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not determine latest version. Specify version explicitly."
+            exit 1
+          fi
+        else
+          VERSION="$INPUT_VERSION"
+          # Normalize: release archives are named with a 'v' prefix (e.g. v0.8.0).
+          # Prepend it if the user omitted it.
+          case "$VERSION" in
+            v*) ;;
+            *) VERSION="v$VERSION" ;;
+          esac
+          if [ "$VERSION" = "v" ] || [ -z "$VERSION" ]; then
+            echo "::error::Version input is empty or invalid after normalization."
+            exit 1
+          fi
+        fi
+        safe_version=$(printf '%s' "$VERSION" | tr -d '\n\r')
+        echo "version=$safe_version" >> "$GITHUB_OUTPUT"
+    - name: Determine platform
+      if: inputs.binary-path == ''
+      id: platform
+      shell: bash
+      env:
+        RUNNER_OS: ${{ runner.os }}
+        RUNNER_ARCH: ${{ runner.arch }}
+      run: |
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64)   TARGET="x86_64-unknown-linux-gnu" ;;
+          Linux-ARM64) TARGET="aarch64-unknown-linux-gnu" ;;
+          macOS-X64)   TARGET="x86_64-apple-darwin" ;;
+          macOS-ARM64) TARGET="aarch64-apple-darwin" ;;
+          Windows-X64) TARGET="x86_64-pc-windows-msvc" ;;
+          *) echo "::error::Unsupported platform: ${RUNNER_OS}-${RUNNER_ARCH}"; exit 1 ;;
+        esac
+        echo "target=$TARGET" >> $GITHUB_OUTPUT
+    - name: Download AgentShield
+      if: inputs.binary-path == ''
+      shell: bash
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+        TARGET: ${{ steps.platform.outputs.target }}
+        RUNNER_TEMP_DIR: ${{ runner.temp }}
+      run: |
+        BASE_URL="https://github.com/aiconnai/agentshield/releases/download/${VERSION}"
+
+        if [[ "$TARGET" == *"windows"* ]]; then
+          ARCHIVE="agentshield-${VERSION}-${TARGET}.zip"
+          curl -fsSL "${BASE_URL}/${ARCHIVE}" -o agentshield.zip
+          unzip -o agentshield.zip -d "${RUNNER_TEMP_DIR}/agentshield"
+        else
+          ARCHIVE="agentshield-${VERSION}-${TARGET}.tar.gz"
+          curl -fsSL "${BASE_URL}/${ARCHIVE}" -o agentshield.tar.gz
+          mkdir -p "${RUNNER_TEMP_DIR}/agentshield"
+          tar xzf agentshield.tar.gz -C "${RUNNER_TEMP_DIR}/agentshield"
+        fi
+
+        chmod +x "${RUNNER_TEMP_DIR}"/agentshield/agentshield* 2>/dev/null || true
+        echo "${RUNNER_TEMP_DIR}/agentshield" >> $GITHUB_PATH
+    - name: Use provided AgentShield
+      if: inputs.binary-path != ''
+      shell: bash
+      env:
+        AGENTSHIELD_BINARY_PATH: ${{ inputs.binary-path }}
+        RUNNER_TEMP_DIR: ${{ runner.temp }}
+      run: |
+        if [ ! -x "$AGENTSHIELD_BINARY_PATH" ]; then
+          echo "::error::Provided AgentShield binary is not executable: $AGENTSHIELD_BINARY_PATH"
+          exit 2
+        fi
+        AGENTSHIELD_DEST="${RUNNER_TEMP_DIR}/agentshield/agentshield"
+        mkdir -p "$(dirname "$AGENTSHIELD_DEST")"
+        if [ "$AGENTSHIELD_BINARY_PATH" != "$AGENTSHIELD_DEST" ]; then
+          cp "$AGENTSHIELD_BINARY_PATH" "$AGENTSHIELD_DEST"
+        fi
+        chmod +x "$AGENTSHIELD_DEST"
+        echo "$(dirname "$AGENTSHIELD_DEST")" >> $GITHUB_PATH
+    - name: Run scan
+      id: scan
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_IGNORE_TESTS: ${{ inputs.ignore-tests }}
+        RUNNER_TEMP_DIR: ${{ runner.temp }}
+      run: |
+        SCAN_LOG="${RUNNER_TEMP_DIR}/agentshield-scan.log"
+        SARIF_FILE=""
+
+        ARGS=(scan "$INPUT_PATH" --fail-on "$INPUT_FAIL_ON")
+
+        if [ "${INPUT_FORMAT}" = "sarif" ]; then
+          SARIF_FILE="${RUNNER_TEMP_DIR}/agentshield-results.sarif"
+          ARGS+=(--format sarif --output "$SARIF_FILE")
+        else
+          ARGS+=(--format "$INPUT_FORMAT")
+        fi
+
+        if [ -n "${INPUT_CONFIG}" ]; then
+          ARGS+=(--config "$INPUT_CONFIG")
+        fi
+
+        if [ -n "${INPUT_BASELINE}" ]; then
+          ARGS+=(--baseline "$INPUT_BASELINE")
+        fi
+
+        if [ "${INPUT_IGNORE_TESTS}" = "true" ]; then
+          ARGS+=(--ignore-tests)
+        fi
+
+        set +e
+        agentshield "${ARGS[@]}" 2>&1 | tee "$SCAN_LOG"
+        EXIT_CODE=${PIPESTATUS[0]}
+        set -e
+
+        if grep -Fq "No suitable adapter found for directory:" "$SCAN_LOG"; then
+          echo "no_adapter=true" >> $GITHUB_OUTPUT
+        else
+          echo "no_adapter=false" >> $GITHUB_OUTPUT
+        fi
+
+        echo "exit-code=$EXIT_CODE" >> $GITHUB_OUTPUT
+        echo "sarif-file=$SARIF_FILE" >> $GITHUB_OUTPUT
+
+        # Count findings from SARIF if available
+        if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
+          COUNT=$(python3 -c "import json; d=json.load(open('$SARIF_FILE')); print(len(d.get('runs',[{}])[0].get('results',[])))" 2>/dev/null || echo "0")
+          echo "finding-count=$COUNT" >> $GITHUB_OUTPUT
+          if [ "$EXIT_CODE" = "1" ]; then
+            echo "::group::AgentShield findings"
+            python3 - "$SARIF_FILE" <<'PY'
+        import json
+        import sys
+
+        with open(sys.argv[1], encoding="utf-8") as handle:
+            sarif = json.load(handle)
+
+        for run in sarif.get("runs", []):
+            for result in run.get("results", []):
+                location = (
+                    result.get("locations", [{}])[0]
+                    .get("physicalLocation", {})
+                )
+                artifact = location.get("artifactLocation", {})
+                region = location.get("region", {})
+                fields = {
+                    "rule": result.get("ruleId", "unknown"),
+                    "level": result.get("level", "unknown"),
+                    "file": artifact.get("uri", "unknown"),
+                    "line": region.get("startLine", "unknown"),
+                    "message": result.get("message", {}).get("text", ""),
+                }
+                rendered = " ".join(
+                    f"{key}={json.dumps(value, ensure_ascii=True)}"
+                    for key, value in fields.items()
+                )
+                print(f"AgentShield finding: {rendered}")
+        PY
+            echo "::endgroup::"
+          fi
+        else
+          echo "finding-count=0" >> $GITHUB_OUTPUT
+        fi
+
+        # Don't fail here — let the upload step run first
+        echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> $GITHUB_ENV
+    - name: Upload SARIF to GitHub Code Scanning
+      if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.scan.outputs.sarif-file != ''
+      uses: github/codeql-action/upload-sarif@d6317709a54fd87078d323eeb0e48ec331c8e621 # v3.28.11
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif-file }}
+        category: agentshield
+      continue-on-error: true
+    - name: Post PR security summary comment
+      if: inputs.comment-pr == 'true' && github.event_name == 'pull_request' && inputs.github-token != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        SARIF_FILE: ${{ steps.scan.outputs.sarif-file }}
+        FINDING_COUNT: ${{ steps.scan.outputs.finding-count }}
+        EXIT_CODE: ${{ steps.scan.outputs.exit-code }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO_NAME: ${{ github.repository }}
+      run: "python3 - <<'PY'\nimport json\nimport os\nimport subprocess\nimport sys\n\nsarif_path = os.environ.get(\"SARIF_FILE\", \"\")\nfinding_count = int(os.environ.get(\"FINDING_COUNT\", \"0\"))\npr_number = os.environ.get(\"PR_NUMBER\", \"\")\nrepo_name = os.environ.get(\"REPO_NAME\", \"\")\ngh_token = os.environ.get(\"GH_TOKEN\", \"\")\n\nif not pr_number or not gh_token or not repo_name:\n    print(\"Missing PR context or GitHub token; skipping PR comment.\")\n    sys.exit(0)\n\nheader = \"### \U0001F6E1️ AgentShield Security Report\\n\\n\"\nif finding_count == 0:\n    body = (\n        f\"{header}\"\n        \"✅ **No security vulnerabilities detected.** All agent tools, MCP endpoints, and execution flows passed security gates.\\n\\n\"\n        \"<sub>Scanned with [AgentShield](https://github.com/aiconnai/agentshield) v1.0.1</sub>\"\n    )\nelse:\n    findings_table = \"| Rule | Severity | Location | Message |\\n|---|---|---|---|\\n\"\n    if sarif_path and os.path.exists(sarif_path):\n        try:\n            with open(sarif_path, encoding=\"utf-8\") as f:\n                data = json.load(f)\n            for run in data.get(\"runs\", []):\n                for r in run.get(\"results\", [])[:15]:\n                    rule_id = r.get(\"ruleId\", \"SHIELD\")\n                    level = r.get(\"level\", \"error\").upper()\n                    sev_icon = \"\U0001F534\" if level == \"ERROR\" else \"\U0001F7E1\"\n                    loc = r.get(\"locations\", [{}])[0].get(\"physicalLocation\", {})\n                    file_uri = loc.get(\"artifactLocation\", {}).get(\"uri\", \"\")\n                    line = loc.get(\"region\", {}).get(\"startLine\", 1)\n                    msg = r.get(\"message\", {}).get(\"text\", \"\").replace(\"|\", \"\\\\|\")\n                    findings_table += f\"| `{rule_id}` | {sev_icon} {level} | `{file_uri}:{line}` | {msg} |\\n\"\n        except Exception as e:\n            findings_table += f\"| Parsing error | - | - | {e} |\\n\"\n\n    body = (\n        f\"{header}\"\n        f\"⚠️ **{finding_count} security finding(s) detected in this PR.**\\n\\n\"\n        f\"{findings_table}\\n\"\n        \"#### \U0001F4A1 Quick Fix\\n\"\n        \"Run `agentshield fix .` locally to automatically remediate unpinned dependencies and unsafe deserializers.\\n\\n\"\n        \"<sub>Scanned with [AgentShield](https://github.com/aiconnai/agentshield) v1.0.1</sub>\"\n    )\n\nimport tempfile\nwith tempfile.NamedTemporaryFile(mode=\"w\", suffix=\".md\", delete=False, encoding=\"utf-8\") as f:\n    f.write(body)\n    comment_file = f.name\n\ncmd = [\"gh\", \"pr\", \"comment\", pr_number, \"--repo\", repo_name, \"--body-file\", comment_file]\ntry:\n    subprocess.run(cmd, check=True)\n    print(\"Successfully posted AgentShield PR comment.\")\nexcept Exception as err:\n    print(f\"Notice: Could not post PR comment (e.g. fork without write permissions or missing pull-requests: write permission: {err}); continuing.\")\nfinally:\n    if os.path.exists(comment_file):\n        try:\n            os.remove(comment_file)\n        except OSError:\n            pass\nPY\n"
+      continue-on-error: true
+    - name: Check result
+      shell: bash
+      env:
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_STRICT: ${{ inputs.strict }}
+        NO_ADAPTER: ${{ steps.scan.outputs.no_adapter }}
+      run: |
+        if [ "$AGENTSHIELD_EXIT" = "1" ]; then
+          echo "::error::AgentShield found findings above the '$INPUT_FAIL_ON' threshold"
+          exit 1
+        elif [ "$AGENTSHIELD_EXIT" = "2" ]; then
+          if [ "$NO_ADAPTER" = "true" ] && [ "$INPUT_STRICT" = "false" ]; then
+            echo "::warning::AgentShield found no supported adapter for the scanned path; non-blocking due strict=false"
+            exit 0
+          elif [ "$NO_ADAPTER" = "true" ]; then
+            echo "::error::AgentShield encountered a scan error: No suitable adapter found"
+            exit 2
+          else
+            echo "::error::AgentShield encountered a scan error"
+            exit 2
+          fi
+        fi

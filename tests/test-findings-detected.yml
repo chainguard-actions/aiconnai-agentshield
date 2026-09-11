@@ -1,0 +1,104 @@
+name: Test findings detected (exit 1, should fail)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fake agentshield binary (findings detected)
+        run: |
+          mkdir -p /tmp/fake-agentshield-bin
+          cat > /tmp/fake-agentshield-bin/agentshield << 'SCRIPT'
+          #!/bin/sh
+          # Fake agentshield binary: simulates findings above threshold (exit 1)
+          # Also writes a SARIF file if --output is given
+          OUTPUT_FILE=""
+          prev=""
+          for arg in "$@"; do
+            case "$prev" in
+              --output) OUTPUT_FILE="$arg" ;;
+            esac
+            prev="$arg"
+          done
+
+          if [ -n "$OUTPUT_FILE" ]; then
+            cat > "$OUTPUT_FILE" << 'SARIF'
+          {
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [
+              {
+                "tool": {
+                  "driver": {
+                    "name": "AgentShield",
+                    "version": "0.0.0-fake"
+                  }
+                },
+                "results": [
+                  {
+                    "ruleId": "SHIELD-001",
+                    "level": "error",
+                    "message": { "text": "Unsafe tool execution detected" },
+                    "locations": [
+                      {
+                        "physicalLocation": {
+                          "artifactLocation": { "uri": "agent.py" },
+                          "region": { "startLine": 42 }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+          SARIF
+          fi
+
+          echo "AgentShield found 1 finding(s) above the 'high' threshold."
+          exit 1
+          SCRIPT
+          chmod +x /tmp/fake-agentshield-bin/agentshield
+
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          path: '.'
+          binary-path: '/tmp/fake-agentshield-bin/agentshield'
+          strict: 'true'
+          upload-sarif: 'false'
+          format: 'sarif'
+          fail-on: 'high'
+
+      - name: Assert action failed (findings above threshold)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+          FINDING_COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "exit-code: $EXIT_CODE"
+          echo "finding-count: $FINDING_COUNT"
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action correctly failed when findings detected"
+          elif [ "$OUTCOME" = "success" ]; then
+            echo "FAIL: action should have failed when findings are above threshold"
+            exit 1
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+
+      - name: Assert finding-count is 1
+        env:
+          FINDING_COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "finding-count: $FINDING_COUNT"
+          if [ "$FINDING_COUNT" != "1" ]; then
+            echo "FAIL: expected finding-count=1 but got '$FINDING_COUNT'"
+            exit 1
+          fi
+          echo "PASS: finding-count is 1 as expected"

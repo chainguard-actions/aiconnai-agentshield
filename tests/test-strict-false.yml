@@ -1,0 +1,44 @@
+name: Test strict=false when no adapter found
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fake agentshield binary (no adapter)
+        run: |
+          mkdir -p /tmp/fake-agentshield-bin
+          cat > /tmp/fake-agentshield-bin/agentshield << 'EOF'
+          #!/bin/sh
+          # Fake agentshield binary: simulates no adapter found (exit 2)
+          echo "No suitable adapter found for directory: ."
+          exit 2
+          EOF
+          chmod +x /tmp/fake-agentshield-bin/agentshield
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          binary-path: '/tmp/fake-agentshield-bin/agentshield'
+          strict: 'false'
+          upload-sarif: 'false'
+          format: 'console'
+          fail-on: 'high'
+
+      - name: Assert action succeeded (strict=false allows no-adapter)
+        run: |
+          echo "PASS: action completed without failure (strict=false)"
+
+      - name: Assert exit-code output is 2
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "2" ]; then
+            echo "FAIL: expected exit-code=2 (no adapter) but got '$EXIT_CODE'"
+            exit 1
+          fi
+          echo "PASS: exit-code is 2 as expected for no-adapter scenario"

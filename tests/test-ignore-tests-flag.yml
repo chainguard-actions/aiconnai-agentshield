@@ -1,0 +1,55 @@
+name: Test ignore-tests flag is passed to binary
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create fake agentshield binary (checks for --ignore-tests flag)
+        run: |
+          mkdir -p /tmp/fake-agentshield-bin
+          cat > /tmp/fake-agentshield-bin/agentshield << 'EOF'
+          #!/bin/sh
+          # Fake agentshield binary: checks that --ignore-tests flag is present
+          FOUND_IGNORE_TESTS=false
+          for arg in "$@"; do
+            if [ "$arg" = "--ignore-tests" ]; then
+              FOUND_IGNORE_TESTS=true
+            fi
+          done
+
+          if [ "$FOUND_IGNORE_TESTS" = "true" ]; then
+            echo "AgentShield: --ignore-tests flag detected, skipping test files."
+          else
+            echo "AgentShield: ERROR: --ignore-tests flag was NOT passed!"
+            exit 2
+          fi
+
+          echo "AgentShield scan complete. No findings detected."
+          exit 0
+          EOF
+          chmod +x /tmp/fake-agentshield-bin/agentshield
+
+      - id: action
+        uses: .
+        with:
+          path: '.'
+          binary-path: '/tmp/fake-agentshield-bin/agentshield'
+          strict: 'true'
+          upload-sarif: 'false'
+          format: 'console'
+          fail-on: 'high'
+          ignore-tests: 'true'
+
+      - name: Assert action succeeded (--ignore-tests flag was passed correctly)
+        env:
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit-code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "FAIL: expected exit-code=0 but got '$EXIT_CODE' — --ignore-tests may not have been passed"
+            exit 1
+          fi
+          echo "PASS: --ignore-tests flag was correctly passed to the binary"
