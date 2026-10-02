@@ -172,7 +172,7 @@ runs:
         echo "AGENTSHIELD_EXIT=$safe_exit" >> "$GITHUB_ENV"
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.scan.outputs.sarif-file != ''
-      uses: chainguard-actions/github-codeql-action/upload-sarif@02c8b1fece55d94b9fc8de711efd251dad82618c # v3
+      uses: chainguard-actions/github-codeql-action/upload-sarif@98b43a37a8c2b4393abd9a20ee705a87f7a4bfa6 # v3
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: agentshield
