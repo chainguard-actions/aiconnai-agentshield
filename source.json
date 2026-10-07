@@ -8,5 +8,5 @@
   "test_policy_sha": "843adf9e4b8f85d0c08b27b9d0b09dd094b54702",
   "test_agent_version": "2",
   "harden_agent_version": "2",
-  "dependency_fingerprint": "sha256:68e8e6129627406c0d6530d2d14e9aa39ed02e39c2dcf22f6b13e49cc061ee97"
+  "dependency_fingerprint": "sha256:315d55cff84314d60be2fc50b78c97e8a85719ff56b523599b19efe66b324c78"
 }
