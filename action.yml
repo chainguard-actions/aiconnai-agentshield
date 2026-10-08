@@ -123,7 +123,7 @@ runs:
           Windows-X64) TARGET="x86_64-pc-windows-msvc" ;;
           *) echo "::error::Unsupported platform: $RUNNER_OS_INPUT-$RUNNER_ARCH_INPUT"; exit 1 ;;
         esac
-        echo "target=$TARGET" >> $GITHUB_OUTPUT
+        echo "target=$TARGET" >> "$GITHUB_OUTPUT"
     - name: Download AgentShield
       if: inputs.binary-path == ''
       shell: bash
@@ -149,7 +149,7 @@ runs:
 
         chmod +x "$RUNNER_TEMP_DIR/agentshield/agentshield"* 2>/dev/null || true
         safe_path=$(printf '%s' "$RUNNER_TEMP_DIR/agentshield" | tr -d '\n\r')
-        echo "$safe_path" >> $GITHUB_PATH
+        echo "$safe_path" >> "$GITHUB_PATH"
     - name: Use provided AgentShield
       if: inputs.binary-path != ''
       shell: bash
@@ -167,62 +167,65 @@ runs:
           cp "$AGENTSHIELD_BINARY_PATH" "$AGENTSHIELD_DEST"
         fi
         chmod +x "$AGENTSHIELD_DEST"
-        safe_path=$(printf '%s' "$(dirname "$AGENTSHIELD_DEST")" | tr -d '\n\r')
-        echo "$safe_path" >> $GITHUB_PATH
+        safe_dir=$(printf '%s' "$(dirname "$AGENTSHIELD_DEST")" | tr -d '\n\r')
+        echo "$safe_dir" >> "$GITHUB_PATH"
     - name: Run scan
       id: scan
       shell: bash
       env:
+        RUNNER_TEMP_DIR: ${{ runner.temp }}
         INPUT_PATH: ${{ inputs.path }}
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_CONFIG: ${{ inputs.config }}
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_IGNORE_TESTS: ${{ inputs.ignore-tests }}
-        RUNNER_TEMP_DIR: ${{ runner.temp }}
       run: |
         SCAN_LOG="$RUNNER_TEMP_DIR/agentshield-scan.log"
-        ARGS=(scan "$INPUT_PATH" --fail-on "$INPUT_FAIL_ON")
+
+        args=()
+        args+=(scan "$INPUT_PATH")
+        args+=(--fail-on "$INPUT_FAIL_ON")
 
         SARIF_FILE=""
         if [ "$INPUT_FORMAT" = "sarif" ]; then
           SARIF_FILE="$RUNNER_TEMP_DIR/agentshield-results.sarif"
-          ARGS+=(--format sarif --output "$SARIF_FILE")
+          args+=(--format sarif --output "$SARIF_FILE")
         else
-          ARGS+=(--format "$INPUT_FORMAT")
+          args+=(--format "$INPUT_FORMAT")
         fi
 
         if [ -n "$INPUT_CONFIG" ]; then
-          ARGS+=(--config "$INPUT_CONFIG")
+          args+=(--config "$INPUT_CONFIG")
         fi
 
         if [ -n "$INPUT_BASELINE" ]; then
-          ARGS+=(--baseline "$INPUT_BASELINE")
+          args+=(--baseline "$INPUT_BASELINE")
         fi
 
         if [ "$INPUT_IGNORE_TESTS" = "true" ]; then
-          ARGS+=(--ignore-tests)
+          args+=(--ignore-tests)
         fi
 
         set +e
-        agentshield "${ARGS[@]}" 2>&1 | tee "$SCAN_LOG"
+        agentshield "${args[@]}" 2>&1 | tee "$SCAN_LOG"
         EXIT_CODE=${PIPESTATUS[0]}
         set -e
 
         if grep -Fq "No suitable adapter found for directory:" "$SCAN_LOG"; then
-          echo "no_adapter=true" >> $GITHUB_OUTPUT
+          echo "no_adapter=true" >> "$GITHUB_OUTPUT"
         else
-          echo "no_adapter=false" >> $GITHUB_OUTPUT
+          echo "no_adapter=false" >> "$GITHUB_OUTPUT"
         fi
 
         echo "exit-code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
-        safe_sarif_file=$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')
-        echo "sarif-file=$safe_sarif_file" >> "$GITHUB_OUTPUT"
+        safe_sarif=$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')
+        echo "sarif-file=$safe_sarif" >> "$GITHUB_OUTPUT"
 
         # Count findings from SARIF if available
         if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
           COUNT=$(python3 -c "import json; d=json.load(open('$SARIF_FILE')); print(len(d.get('runs',[{}])[0].get('results',[])))" 2>/dev/null || echo "0")
-          echo "finding-count=$COUNT" >> $GITHUB_OUTPUT
+          echo "finding-count=$COUNT" >> "$GITHUB_OUTPUT"
           if [ "$EXIT_CODE" = "1" ]; then
             echo "::group::AgentShield findings"
             python3 - "$SARIF_FILE" <<'PY'
@@ -256,14 +259,14 @@ runs:
             echo "::endgroup::"
           fi
         else
-          echo "finding-count=0" >> $GITHUB_OUTPUT
+          echo "finding-count=0" >> "$GITHUB_OUTPUT"
         fi
 
         # Don't fail here — let the upload step run first
-        echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> $GITHUB_ENV
+        echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> "$GITHUB_ENV"
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.scan.outputs.sarif-file != ''
-      uses: chainguard-actions/github-codeql-action/upload-sarif@05a2b18f97905888db8f883471cc925f1a97a01c # v4
+      uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: agentshield
@@ -272,8 +275,8 @@ runs:
       shell: bash
       env:
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
-        INPUT_STRICT: ${{ inputs.strict }}
         STEP_NO_ADAPTER: ${{ steps.scan.outputs.no_adapter }}
+        INPUT_STRICT: ${{ inputs.strict }}
       run: |
         if [ "$AGENTSHIELD_EXIT" = "1" ]; then
           echo "::error::AgentShield found findings above the '$INPUT_FAIL_ON' threshold"
