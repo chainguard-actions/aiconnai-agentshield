@@ -95,15 +95,16 @@ runs:
           Windows-X64) TARGET="x86_64-pc-windows-msvc" ;;
           *) echo "::error::Unsupported platform: $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
         esac
-        safe_target=$(printf '%s' "$TARGET" | tr -d '\n\r')
-        echo "target=$safe_target" >> "$GITHUB_OUTPUT"
+        echo "target=$TARGET" >> "$GITHUB_OUTPUT"
     - name: Download AgentShield
       shell: bash
       env:
-        VERSION: ${{ steps.version.outputs.version }}
-        TARGET: ${{ steps.platform.outputs.target }}
+        STEP_VERSION: ${{ steps.version.outputs.version }}
+        STEP_TARGET: ${{ steps.platform.outputs.target }}
         RUNNER_TEMP: ${{ runner.temp }}
       run: |
+        VERSION="$STEP_VERSION"
+        TARGET="$STEP_TARGET"
         BASE_URL="https://github.com/limaronaldo/agentshield/releases/download/${VERSION}"
 
         if [[ "$TARGET" == *"windows"* ]]; then
@@ -161,18 +162,17 @@ runs:
 
         # Count findings from SARIF if available
         if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
-          COUNT=$(python3 -c "import json; d=json.load(open('$SARIF_FILE')); print(len(d.get('runs',[{}])[0].get('results',[])))" 2>/dev/null || echo "0")
+          COUNT=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(len(d.get('runs',[{}])[0].get('results',[])))" "$SARIF_FILE" 2>/dev/null || echo "0")
           echo "finding-count=$COUNT" >> "$GITHUB_OUTPUT"
         else
           echo "finding-count=0" >> "$GITHUB_OUTPUT"
         fi
 
         # Don't fail here — let the upload step run first
-        safe_exit=$(printf '%s' "$EXIT_CODE" | tr -d '\n\r')
-        echo "AGENTSHIELD_EXIT=$safe_exit" >> "$GITHUB_ENV"
+        echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> "$GITHUB_ENV"
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.scan.outputs.sarif-file != ''
-      uses: chainguard-actions/github-codeql-action/upload-sarif@02c8b1fece55d94b9fc8de711efd251dad82618c # v3
+      uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b # v3
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: agentshield
