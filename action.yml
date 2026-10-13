@@ -216,7 +216,8 @@ runs:
         fi
 
         echo "exit-code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
-        echo "sarif-file=$SARIF_FILE" >> "$GITHUB_OUTPUT"
+        safe_sarif=$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')
+        echo "sarif-file=$safe_sarif" >> "$GITHUB_OUTPUT"
 
         # Count findings from SARIF if available
         if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
@@ -262,7 +263,7 @@ runs:
         echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> "$GITHUB_ENV"
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.scan.outputs.sarif-file != ''
-      uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+      uses: chainguard-actions/github-codeql-action/upload-sarif@d8c1fe8e4e11b49fd288625d460f0e03a949312f # v4
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: agentshield
@@ -271,8 +272,8 @@ runs:
       shell: bash
       env:
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
-        SCAN_NO_ADAPTER: ${{ steps.scan.outputs.no_adapter }}
         INPUT_STRICT: ${{ inputs.strict }}
+        SCAN_NO_ADAPTER: ${{ steps.scan.outputs.no_adapter }}
       run: |
         if [ "$AGENTSHIELD_EXIT" = "1" ]; then
           echo "::error::AgentShield found findings above the '$INPUT_FAIL_ON' threshold"
