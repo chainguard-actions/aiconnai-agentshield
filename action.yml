@@ -123,7 +123,8 @@ runs:
           Windows-X64) TARGET="x86_64-pc-windows-msvc" ;;
           *) echo "::error::Unsupported platform: $RUNNER_OS_INPUT-$RUNNER_ARCH_INPUT"; exit 1 ;;
         esac
-        echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+        safe_target=$(printf '%s' "$TARGET" | tr -d '\n\r')
+        echo "target=$safe_target" >> "$GITHUB_OUTPUT"
     - name: Download AgentShield
       if: inputs.binary-path == ''
       shell: bash
@@ -182,33 +183,30 @@ runs:
         INPUT_IGNORE_TESTS: ${{ inputs.ignore-tests }}
       run: |
         SCAN_LOG="$RUNNER_TEMP_DIR/agentshield-scan.log"
-
-        args=()
-        args+=(scan "$INPUT_PATH")
-        args+=(--fail-on "$INPUT_FAIL_ON")
+        ARGS=(scan "$INPUT_PATH" --fail-on "$INPUT_FAIL_ON")
 
         SARIF_FILE=""
         if [ "$INPUT_FORMAT" = "sarif" ]; then
           SARIF_FILE="$RUNNER_TEMP_DIR/agentshield-results.sarif"
-          args+=(--format sarif --output "$SARIF_FILE")
+          ARGS+=(--format sarif --output "$SARIF_FILE")
         else
-          args+=(--format "$INPUT_FORMAT")
+          ARGS+=(--format "$INPUT_FORMAT")
         fi
 
         if [ -n "$INPUT_CONFIG" ]; then
-          args+=(--config "$INPUT_CONFIG")
+          ARGS+=(--config "$INPUT_CONFIG")
         fi
 
         if [ -n "$INPUT_BASELINE" ]; then
-          args+=(--baseline "$INPUT_BASELINE")
+          ARGS+=(--baseline "$INPUT_BASELINE")
         fi
 
         if [ "$INPUT_IGNORE_TESTS" = "true" ]; then
-          args+=(--ignore-tests)
+          ARGS+=(--ignore-tests)
         fi
 
         set +e
-        agentshield "${args[@]}" 2>&1 | tee "$SCAN_LOG"
+        agentshield "${ARGS[@]}" 2>&1 | tee "$SCAN_LOG"
         EXIT_CODE=${PIPESTATUS[0]}
         set -e
 
@@ -219,8 +217,7 @@ runs:
         fi
 
         echo "exit-code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
-        safe_sarif=$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')
-        echo "sarif-file=$safe_sarif" >> "$GITHUB_OUTPUT"
+        echo "sarif-file=$SARIF_FILE" >> "$GITHUB_OUTPUT"
 
         # Count findings from SARIF if available
         if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
@@ -266,7 +263,7 @@ runs:
         echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> "$GITHUB_ENV"
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.scan.outputs.sarif-file != ''
-      uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+      uses: chainguard-actions/github-codeql-action/upload-sarif@d8c1fe8e4e11b49fd288625d460f0e03a949312f # v4
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: agentshield
@@ -275,17 +272,17 @@ runs:
       shell: bash
       env:
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
-        STEP_NO_ADAPTER: ${{ steps.scan.outputs.no_adapter }}
+        SCAN_NO_ADAPTER: ${{ steps.scan.outputs.no_adapter }}
         INPUT_STRICT: ${{ inputs.strict }}
       run: |
         if [ "$AGENTSHIELD_EXIT" = "1" ]; then
           echo "::error::AgentShield found findings above the '$INPUT_FAIL_ON' threshold"
           exit 1
         elif [ "$AGENTSHIELD_EXIT" = "2" ]; then
-          if [ "$STEP_NO_ADAPTER" = "true" ] && [ "$INPUT_STRICT" = "false" ]; then
+          if [ "$SCAN_NO_ADAPTER" = "true" ] && [ "$INPUT_STRICT" = "false" ]; then
             echo "::warning::AgentShield found no supported adapter for the scanned path; non-blocking due strict=false"
             exit 0
-          elif [ "$STEP_NO_ADAPTER" = "true" ]; then
+          elif [ "$SCAN_NO_ADAPTER" = "true" ]; then
             echo "::error::AgentShield encountered a scan error: No suitable adapter found"
             exit 2
           else
