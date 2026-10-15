@@ -78,8 +78,8 @@ runs:
         else
           VERSION="$INPUT_VERSION"
         fi
-        safe_version=$(printf '%s' "$VERSION" | tr -d '\n\r')
-        echo "version=$safe_version" >> "$GITHUB_OUTPUT"
+        safe_version="$(printf '%s' "$VERSION" | tr -d '\n\r')"
+        echo "version=$safe_version" >> $GITHUB_OUTPUT
     - name: Determine platform
       id: platform
       shell: bash
@@ -95,7 +95,8 @@ runs:
           Windows-X64) TARGET="x86_64-pc-windows-msvc" ;;
           *) echo "::error::Unsupported platform: $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
         esac
-        echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+        safe_target="$(printf '%s' "$TARGET" | tr -d '\n\r')"
+        echo "target=$safe_target" >> $GITHUB_OUTPUT
     - name: Download AgentShield
       shell: bash
       env:
@@ -119,8 +120,8 @@ runs:
         fi
 
         chmod +x "$RUNNER_TEMP/agentshield/agentshield"* 2>/dev/null || true
-        safe_path=$(printf '%s' "$RUNNER_TEMP/agentshield" | tr -d '\n\r')
-        echo "$safe_path" >> "$GITHUB_PATH"
+        safe_path="$(printf '%s' "$RUNNER_TEMP/agentshield" | tr -d '\n\r')"
+        echo "$safe_path" >> $GITHUB_PATH
     - name: Run scan
       id: scan
       shell: bash
@@ -132,7 +133,7 @@ runs:
         INPUT_IGNORE_TESTS: ${{ inputs.ignore-tests }}
         RUNNER_TEMP: ${{ runner.temp }}
       run: |
-        ARGS=("scan" "$INPUT_PATH")
+        ARGS=(scan "$INPUT_PATH")
         ARGS+=("--fail-on" "$INPUT_FAIL_ON")
 
         SARIF_FILE=""
@@ -156,23 +157,23 @@ runs:
         EXIT_CODE=$?
         set -e
 
-        echo "exit-code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
-        safe_sarif=$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')
-        echo "sarif-file=$safe_sarif" >> "$GITHUB_OUTPUT"
+        echo "exit-code=$EXIT_CODE" >> $GITHUB_OUTPUT
+        safe_sarif="$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')"
+        echo "sarif-file=$safe_sarif" >> $GITHUB_OUTPUT
 
         # Count findings from SARIF if available
         if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
-          COUNT=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(len(d.get('runs',[{}])[0].get('results',[])))" "$SARIF_FILE" 2>/dev/null || echo "0")
-          echo "finding-count=$COUNT" >> "$GITHUB_OUTPUT"
+          COUNT=$(python3 -c "import json; d=json.load(open('$SARIF_FILE')); print(len(d.get('runs',[{}])[0].get('results',[])))" 2>/dev/null || echo "0")
+          echo "finding-count=$COUNT" >> $GITHUB_OUTPUT
         else
-          echo "finding-count=0" >> "$GITHUB_OUTPUT"
+          echo "finding-count=0" >> $GITHUB_OUTPUT
         fi
 
         # Don't fail here — let the upload step run first
-        echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> "$GITHUB_ENV"
+        echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> $GITHUB_ENV
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.scan.outputs.sarif-file != ''
-      uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b # v3
+      uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: agentshield
