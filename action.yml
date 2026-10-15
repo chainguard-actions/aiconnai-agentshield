@@ -99,12 +99,10 @@ runs:
     - name: Download AgentShield
       shell: bash
       env:
-        STEP_VERSION: ${{ steps.version.outputs.version }}
-        STEP_TARGET: ${{ steps.platform.outputs.target }}
+        VERSION: ${{ steps.version.outputs.version }}
+        TARGET: ${{ steps.platform.outputs.target }}
         RUNNER_TEMP: ${{ runner.temp }}
       run: |
-        VERSION="$STEP_VERSION"
-        TARGET="$STEP_TARGET"
         BASE_URL="https://github.com/limaronaldo/agentshield/releases/download/${VERSION}"
 
         if [[ "$TARGET" == *"windows"* ]]; then
@@ -132,23 +130,22 @@ runs:
         INPUT_IGNORE_TESTS: ${{ inputs.ignore-tests }}
         RUNNER_TEMP: ${{ runner.temp }}
       run: |
-        ARGS=(scan "$INPUT_PATH")
-        ARGS+=("--fail-on" "$INPUT_FAIL_ON")
+        ARGS=(scan "$INPUT_PATH" --fail-on "$INPUT_FAIL_ON")
 
         SARIF_FILE=""
         if [ "$INPUT_FORMAT" = "sarif" ]; then
           SARIF_FILE="$RUNNER_TEMP/agentshield-results.sarif"
-          ARGS+=("--format" "sarif" "--output" "$SARIF_FILE")
+          ARGS+=(--format sarif --output "$SARIF_FILE")
         else
-          ARGS+=("--format" "$INPUT_FORMAT")
+          ARGS+=(--format "$INPUT_FORMAT")
         fi
 
         if [ -n "$INPUT_CONFIG" ]; then
-          ARGS+=("--config" "$INPUT_CONFIG")
+          ARGS+=(--config "$INPUT_CONFIG")
         fi
 
         if [ "$INPUT_IGNORE_TESTS" = "true" ]; then
-          ARGS+=("--ignore-tests")
+          ARGS+=(--ignore-tests)
         fi
 
         set +e
@@ -157,11 +154,12 @@ runs:
         set -e
 
         echo "exit-code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
-        echo "sarif-file=$SARIF_FILE" >> "$GITHUB_OUTPUT"
+        safe_sarif="$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')"
+        echo "sarif-file=$safe_sarif" >> "$GITHUB_OUTPUT"
 
         # Count findings from SARIF if available
         if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
-          COUNT=$(python3 -c "import json; d=json.load(open('$SARIF_FILE')); print(len(d.get('runs',[{}])[0].get('results',[])))" 2>/dev/null || echo "0")
+          COUNT=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(len(d.get('runs',[{}])[0].get('results',[])))" "$SARIF_FILE" 2>/dev/null || echo "0")
           echo "finding-count=$COUNT" >> "$GITHUB_OUTPUT"
         else
           echo "finding-count=0" >> "$GITHUB_OUTPUT"
@@ -171,7 +169,7 @@ runs:
         echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> "$GITHUB_ENV"
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.scan.outputs.sarif-file != ''
-      uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b # v3
+      uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: agentshield
