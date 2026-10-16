@@ -167,8 +167,7 @@ runs:
           cp "$AGENTSHIELD_BINARY_PATH" "$AGENTSHIELD_DEST"
         fi
         chmod +x "$AGENTSHIELD_DEST"
-        safe_path=$(printf '%s' "$(dirname "$AGENTSHIELD_DEST")" | tr -d '\n\r')
-        echo "$safe_path" >> "$GITHUB_PATH"
+        echo "$(dirname "$AGENTSHIELD_DEST")" >> "$GITHUB_PATH"
     - name: Run scan
       id: scan
       shell: bash
@@ -263,7 +262,7 @@ runs:
         echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> "$GITHUB_ENV"
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.scan.outputs.sarif-file != ''
-      uses: chainguard-actions/github-codeql-action/upload-sarif@d8c1fe8e4e11b49fd288625d460f0e03a949312f # v4
+      uses: chainguard-actions/github-codeql-action/upload-sarif@af9a71138d91d5fb30bfcfc73aff470163092543 # v4
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: agentshield
@@ -272,17 +271,17 @@ runs:
       shell: bash
       env:
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
-        SCAN_NO_ADAPTER: ${{ steps.scan.outputs.no_adapter }}
         INPUT_STRICT: ${{ inputs.strict }}
+        STEP_NO_ADAPTER: ${{ steps.scan.outputs.no_adapter }}
       run: |
         if [ "$AGENTSHIELD_EXIT" = "1" ]; then
           echo "::error::AgentShield found findings above the '$INPUT_FAIL_ON' threshold"
           exit 1
         elif [ "$AGENTSHIELD_EXIT" = "2" ]; then
-          if [ "$SCAN_NO_ADAPTER" = "true" ] && [ "$INPUT_STRICT" = "false" ]; then
+          if [ "$STEP_NO_ADAPTER" = "true" ] && [ "$INPUT_STRICT" = "false" ]; then
             echo "::warning::AgentShield found no supported adapter for the scanned path; non-blocking due strict=false"
             exit 0
-          elif [ "$SCAN_NO_ADAPTER" = "true" ]; then
+          elif [ "$STEP_NO_ADAPTER" = "true" ]; then
             echo "::error::AgentShield encountered a scan error: No suitable adapter found"
             exit 2
           else
