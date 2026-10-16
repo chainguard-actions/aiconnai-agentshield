@@ -105,7 +105,7 @@ runs:
             exit 1
           fi
         fi
-        safe_version=$(printf '%s' "$VERSION" | tr -d '\n\r')
+        safe_version="$(printf '%s' "$VERSION" | tr -d '\n\r')"
         echo "version=$safe_version" >> "$GITHUB_OUTPUT"
     - name: Determine platform
       if: inputs.binary-path == ''
@@ -123,8 +123,7 @@ runs:
           Windows-X64) TARGET="x86_64-pc-windows-msvc" ;;
           *) echo "::error::Unsupported platform: $RUNNER_OS_INPUT-$RUNNER_ARCH_INPUT"; exit 1 ;;
         esac
-        safe_target=$(printf '%s' "$TARGET" | tr -d '\n\r')
-        echo "target=$safe_target" >> "$GITHUB_OUTPUT"
+        echo "target=$TARGET" >> "$GITHUB_OUTPUT"
     - name: Download AgentShield
       if: inputs.binary-path == ''
       shell: bash
@@ -149,7 +148,7 @@ runs:
         fi
 
         chmod +x "$RUNNER_TEMP_DIR/agentshield/agentshield"* 2>/dev/null || true
-        safe_path=$(printf '%s' "$RUNNER_TEMP_DIR/agentshield" | tr -d '\n\r')
+        safe_path="$(printf '%s' "$RUNNER_TEMP_DIR/agentshield" | tr -d '\n\r')"
         echo "$safe_path" >> "$GITHUB_PATH"
     - name: Use provided AgentShield
       if: inputs.binary-path != ''
@@ -216,7 +215,7 @@ runs:
         fi
 
         echo "exit-code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
-        safe_sarif=$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')
+        safe_sarif="$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')"
         echo "sarif-file=$safe_sarif" >> "$GITHUB_OUTPUT"
 
         # Count findings from SARIF if available
@@ -263,7 +262,7 @@ runs:
         echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> "$GITHUB_ENV"
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.scan.outputs.sarif-file != ''
-      uses: chainguard-actions/github-codeql-action/upload-sarif@d8c1fe8e4e11b49fd288625d460f0e03a949312f # v4
+      uses: chainguard-actions/github-codeql-action/upload-sarif@af9a71138d91d5fb30bfcfc73aff470163092543 # v4
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: agentshield
@@ -273,16 +272,16 @@ runs:
       env:
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
         INPUT_STRICT: ${{ inputs.strict }}
-        SCAN_NO_ADAPTER: ${{ steps.scan.outputs.no_adapter }}
+        STEP_NO_ADAPTER: ${{ steps.scan.outputs.no_adapter }}
       run: |
         if [ "$AGENTSHIELD_EXIT" = "1" ]; then
           echo "::error::AgentShield found findings above the '$INPUT_FAIL_ON' threshold"
           exit 1
         elif [ "$AGENTSHIELD_EXIT" = "2" ]; then
-          if [ "$SCAN_NO_ADAPTER" = "true" ] && [ "$INPUT_STRICT" = "false" ]; then
+          if [ "$STEP_NO_ADAPTER" = "true" ] && [ "$INPUT_STRICT" = "false" ]; then
             echo "::warning::AgentShield found no supported adapter for the scanned path; non-blocking due strict=false"
             exit 0
-          elif [ "$SCAN_NO_ADAPTER" = "true" ]; then
+          elif [ "$STEP_NO_ADAPTER" = "true" ]; then
             echo "::error::AgentShield encountered a scan error: No suitable adapter found"
             exit 2
           else
