@@ -10,101 +10,90 @@
 
 **Harden Agent Version:** `2`
 
-Action **aiconnai--agentshield/v0.8.8** was hardened automatically. 16 finding(s) were identified and resolved across 2 iteration(s).
+Action **aiconnai--agentshield/v0.8.8** was hardened automatically. 21 finding(s) were identified and resolved across 2 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Multiple `${{ ... }}` expressions are directly interpolated inside `run:` shell command strings across several composite action steps in action.yml. This allows script injection because the expression values are substituted into the shell script before the shell parses it.
-
-**Step: 'Determine version'** (sub-rule a):
-- Line 70: `if [ "${{ inputs.version }}" = "latest" ]; then`
-- Line 81: `VERSION="${{ inputs.version }}"`
-
-**Step: 'Determine platform'** (sub-rule a):
-- Line 100: `case "${{ runner.os }}-${{ runner.arch }}" in`
-- Line 106: `*) echo "::error::Unsupported platform: ${{ runner.os }}-${{ runner.arch }}"; exit 1 ;;`
-
-**Step: 'Download AgentShield'** (sub-rule a):
-- Line 114: `VERSION="${{ steps.version.outputs.version }}"`
-- Line 115: `TARGET="${{ steps.platform.outputs.target }}"`
-- Line 121: `unzip -o agentshield.zip -d ${{ runner.temp }}/agentshield`
-- Line 125: `mkdir -p ${{ runner.temp }}/agentshield`
-- Line 129: `chmod +x ${{ runner.temp }}/agentshield/agentshield*`
-- Line 130: `echo "${{ runner.temp }}/agentshield" >> $GITHUB_PATH`
-
-**Step: 'Use provided AgentShield'** (sub-rule a):
-- Line 142: `AGENTSHIELD_DEST="${{ runner.temp }}/agentshield/agentshield"`
-
-**Step: 'Run scan'** (sub-rule a):
-- Line 154: `SCAN_LOG="${{ runner.temp }}/agentshield-scan.log"`
-- Line 155: `ARGS="scan ${{ inputs.path }}"`
-- Line 156: `ARGS="$ARGS --fail-on ${{ inputs.fail-on }}"`
-- Line 159: `if [ "${{ inputs.format }}" = "sarif" ]; then`
-- Line 160: `SARIF_FILE="${{ runner.temp }}/agentshield-results.sarif"`
-- Line 163: `ARGS="$ARGS --format ${{ inputs.format }}"`
-- Line 166: `if [ -n "${{ inputs.config }}" ]; then`
-- Line 167: `ARGS="$ARGS --config ${{ inputs.config }}"`
-- Line 170: `if [ -n "${{ inputs.baseline }}" ]; then`
-- Line 171: `ARGS="$ARGS --baseline ${{ inputs.baseline }}"`
-- Line 174: `if [ "${{ inputs.ignore-tests }}" = "true" ]; then`
-
-**Step: 'Check result'** (sub-rule a):
-- Line 209: `echo "::error::AgentShield found findings above the '${{ inputs.fail-on }}' threshold"`
-- Line 212: `if [ "${{ steps.scan.outputs.no_adapter }}" = "true" ] && [ "${{ inputs.strict }}" = "false" ]; then`
-- Line 215: `elif [ "${{ steps.scan.outputs.no_adapter }}" = "true" ]; then`
-
-All `inputs.*` values are attacker-controllable. All `${{ ... }}` expressions must be moved to `env:` variables and the env vars must be double-quoted in the shell script.
+Sub-rule (a): Multiple ${{ }} expressions are directly interpolated inside run: shell commands in the 'Determine version' step. The expression `${{ inputs.version }}` appears directly in shell command strings (e.g., `if [ "${{ inputs.version }}" = "latest" ]; then` and `VERSION="${{ inputs.version }}"`). Any ${{ }} expression inside a run: block is a script-injection risk because YAML template substitution occurs before the shell ever sees the value, allowing an attacker to inject shell metacharacters.
 
 Locations:
 
 - `action.yml:70`
 - `action.yml:81`
-- `action.yml:100`
-- `action.yml:106`
+
+### script-injection (severity: high)
+
+Sub-rule (a): The 'Determine platform' step directly interpolates `${{ runner.os }}` and `${{ runner.arch }}` inside a run: shell command string: `case "${{ runner.os }}-${{ runner.arch }}" in`. Any ${{ }} expression in a run: block is a script-injection finding regardless of which context it reads from, as YAML template substitution happens before shell quoting.
+
+Locations:
+
+- `action.yml:99`
+- `action.yml:105`
+
+### script-injection (severity: high)
+
+Sub-rule (a): The 'Download AgentShield' step directly interpolates multiple ${{ }} expressions inside run: shell commands: `VERSION="${{ steps.version.outputs.version }}"`, `TARGET="${{ steps.platform.outputs.target }}"`, `unzip -o agentshield.zip -d ${{ runner.temp }}/agentshield`, `mkdir -p ${{ runner.temp }}/agentshield`, `chmod +x ${{ runner.temp }}/agentshield/agentshield*`, and `echo "${{ runner.temp }}/agentshield" >> $GITHUB_PATH`. These are all direct ${{ }} interpolations inside shell run blocks.
+
+Locations:
+
+- `action.yml:113`
 - `action.yml:114`
-- `action.yml:115`
-- `action.yml:121`
+- `action.yml:119`
+- `action.yml:122`
 - `action.yml:125`
-- `action.yml:129`
-- `action.yml:130`
-- `action.yml:142`
-- `action.yml:154`
-- `action.yml:155`
+- `action.yml:126`
+
+### script-injection (severity: high)
+
+Sub-rule (a): The 'Use provided AgentShield' step directly interpolates `${{ runner.temp }}` inside a run: shell command string: `AGENTSHIELD_DEST="${{ runner.temp }}/agentshield/agentshield"`. This is a direct ${{ }} interpolation inside a shell run block.
+
+Locations:
+
+- `action.yml:134`
+
+### script-injection (severity: high)
+
+Sub-rule (a): The 'Run scan' step directly interpolates multiple ${{ }} expressions inside run: shell commands, including attacker-controllable inputs: `SCAN_LOG="${{ runner.temp }}/agentshield-scan.log"`, `ARGS="scan ${{ inputs.path }}"`, `ARGS="$ARGS --fail-on ${{ inputs.fail-on }}"`, `SARIF_FILE="${{ runner.temp }}/agentshield-results.sarif"`, `ARGS="$ARGS --format ${{ inputs.format }}"`, `if [ -n "${{ inputs.config }}" ]`, `if [ -n "${{ inputs.baseline }}" ]`, and `if [ "${{ inputs.ignore-tests }}" = "true" ]`. Attacker-controlled inputs (path, fail-on, format, config, baseline, ignore-tests) are interpolated directly into shell command strings, enabling command injection.
+
+Locations:
+
+- `action.yml:145`
+- `action.yml:146`
+- `action.yml:147`
+- `action.yml:150`
+- `action.yml:153`
 - `action.yml:156`
-- `action.yml:159`
 - `action.yml:160`
-- `action.yml:163`
-- `action.yml:166`
-- `action.yml:167`
-- `action.yml:170`
-- `action.yml:171`
-- `action.yml:174`
+- `action.yml:164`
+
+### script-injection (severity: high)
+
+Sub-rule (a): The 'Check result' step directly interpolates attacker-controllable ${{ }} expressions inside run: shell commands: `echo "::error::AgentShield found findings above the '${{ inputs.fail-on }}' threshold"`, `if [ "${{ steps.scan.outputs.no_adapter }}" = "true" ] && [ "${{ inputs.strict }}" = "false" ]`, and `elif [ "${{ steps.scan.outputs.no_adapter }}" = "true" ]`. The inputs.fail-on and inputs.strict values are attacker-controlled and interpolated directly into shell.
+
+Locations:
+
+- `action.yml:204`
+- `action.yml:206`
 - `action.yml:209`
-- `action.yml:212`
-- `action.yml:215`
 
 ### github-env-injection (severity: high)
 
-Unsanitized values derived from untrusted inputs are written to GitHub special environment files without the required `printf '%s' ... | tr -d '\n\r'` sanitization step.
-
-1. **'Determine version' step, line 93**: `echo "version=$VERSION" >> $GITHUB_OUTPUT` — `$VERSION` is derived directly from `${{ inputs.version }}` (lines 70 and 81). An attacker can inject newlines into `inputs.version` to poison `$GITHUB_OUTPUT` with arbitrary key-value pairs.
-
-2. **'Download AgentShield' step, line 130**: `echo "${{ runner.temp }}/agentshield" >> $GITHUB_PATH` — `${{ runner.temp }}` is a workflow-controllable context value written directly to `$GITHUB_PATH` without sanitization. A newline in `runner.temp` would allow injecting arbitrary paths.
+The 'Determine version' step writes the value of `inputs.version` (an attacker-controllable input) to $GITHUB_OUTPUT without sanitization. The value is assigned via `VERSION="${{ inputs.version }}"` and then written as `echo "version=$VERSION" >> $GITHUB_OUTPUT`. No `printf '%s' ... | tr -d '\n\r'` sanitization step is applied before the write. A newline-containing input value could inject additional key=value pairs into GITHUB_OUTPUT.
 
 Locations:
 
-- `action.yml:93`
-- `action.yml:130`
+- `action.yml:81`
+- `action.yml:92`
 
 ### unpinned-uses (severity: high)
 
-The `uses:` reference `github/codeql-action/upload-sarif@v4` uses a mutable tag (`@v4`) instead of a pinned 40-character commit SHA. A tag can be moved to point to a different (potentially malicious) commit, enabling supply-chain attacks. It should be pinned to a full SHA, e.g. `github/codeql-action/upload-sarif@<40-char-sha> # v4`.
+The action uses `github/codeql-action/upload-sarif@v4` which references a mutable tag (`@v4`) rather than a full 40-character commit SHA. This is vulnerable to supply-chain attacks where the tag could be moved to point to malicious code. It should be pinned to a specific commit SHA, e.g., `github/codeql-action/upload-sarif@<40-char-sha> # v4`.
 
 Locations:
 
-- `action.yml:200`
+- `action.yml:195`
 
 ### static-inline-injection (severity: high)
 
@@ -218,22 +207,16 @@ Locations:
 
 **Notes:**
 
-Fixed all findings in hardened/action/action.yml:
-1. script-injection / static-inline-injection: Moved all ${{ inputs.* }}, ${{ runner.* }}, and ${{ steps.*.outputs.* }} expressions from run: blocks to env: blocks in all affected steps (Determine version, Determine platform, Download AgentShield, Use provided AgentShield, Run scan, Check result). Shell scripts now reference plain $ENV_VAR_NAME variables.
-2. github-env-injection: Added `printf '%s' "$VERSION" | tr -d '\n\r'` sanitization before writing to $GITHUB_OUTPUT in 'Determine version' step, and `printf '%s' "$RUNNER_TEMP_DIR/agentshield" | tr -d '\n\r'` before writing to $GITHUB_PATH in 'Download AgentShield' step.
-3. unpinned-uses: Pinned github/codeql-action/upload-sarif@v4 to full commit SHA @24c54180a607b1449ed407dd24f251e4e9147c8d # v4.
+Fixed all findings in action.yml:
+1. script-injection / static-inline-injection: Moved all ${{ }} expressions from run: shell blocks into env: blocks for every affected step (Determine version, Determine platform, Download AgentShield, Use provided AgentShield, Run scan, Check result). Shell scripts now reference plain environment variables ($INPUT_VERSION, $RUNNER_OS_INPUT, $RUNNER_ARCH_INPUT, $STEP_VERSION, $STEP_TARGET, $RUNNER_TEMP_DIR, $INPUT_PATH, $INPUT_FAIL_ON, $INPUT_FORMAT, $INPUT_CONFIG, $INPUT_BASELINE, $INPUT_IGNORE_TESTS, $INPUT_STRICT, $STEP_NO_ADAPTER).
+2. github-env-injection: Added sanitization of the version value before writing to $GITHUB_OUTPUT using `safe_version="$(printf '%s' "$VERSION" | tr -d '\n\r')"` and writing `$safe_version` instead of `$VERSION`.
+3. unpinned-uses: Pinned github/codeql-action/upload-sarif@v4 to full commit SHA @6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.
 
 ### Iteration 2
 
-**Fixes applied:** script-injection, github-env-injection
+**Fixes applied:** script-injection
 
 **Notes:**
 
-Fixed two security findings in hardened/action/action.yml:
-
-1. script-injection: In the 'Run scan' step, replaced unquoted string concatenation for building the ARGS variable with a bash array. Each user-controlled input (INPUT_PATH, INPUT_FAIL_ON, INPUT_FORMAT, INPUT_CONFIG, INPUT_BASELINE) is now properly double-quoted as a separate array element, and the command is invoked as `agentshield "${ARGS[@]}"` to prevent shell metacharacter injection.
-
-2. github-env-injection (two locations):
-   - 'Use provided AgentShield' step: Added sanitization before writing to GITHUB_PATH using `safe_dir=$(printf '%s' "$(dirname "$AGENTSHIELD_DEST")" | tr -d '\n\r')` then `echo "$safe_dir" >> "$GITHUB_PATH"`.
-   - 'Run scan' step: Added sanitization before writing sarif-file to GITHUB_OUTPUT using `safe_sarif=$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')` then `echo "sarif-file=$safe_sarif" >> "$GITHUB_OUTPUT"`.
+Fixed the 'Run scan' step in action.yml by replacing the string-based ARGS accumulation with a bash array. Changed `ARGS="scan $INPUT_PATH"` and subsequent unquoted concatenations to `ARGS=(scan "$INPUT_PATH" --fail-on "$INPUT_FAIL_ON")` with `ARGS+=(...)` for subsequent additions. All user-controlled inputs ($INPUT_PATH, $INPUT_FAIL_ON, $INPUT_FORMAT, $INPUT_CONFIG, $INPUT_BASELINE) are now properly double-quoted within the array. The final invocation was changed from `agentshield $ARGS` to `agentshield "${ARGS[@]}"` to safely expand the array with proper argument boundaries.
 

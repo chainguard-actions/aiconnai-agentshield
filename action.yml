@@ -105,7 +105,7 @@ runs:
             exit 1
           fi
         fi
-        safe_version=$(printf '%s' "$VERSION" | tr -d '\n\r')
+        safe_version="$(printf '%s' "$VERSION" | tr -d '\n\r')"
         echo "version=$safe_version" >> "$GITHUB_OUTPUT"
     - name: Determine platform
       if: inputs.binary-path == ''
@@ -148,8 +148,7 @@ runs:
         fi
 
         chmod +x "$RUNNER_TEMP_DIR/agentshield/agentshield"* 2>/dev/null || true
-        safe_path=$(printf '%s' "$RUNNER_TEMP_DIR/agentshield" | tr -d '\n\r')
-        echo "$safe_path" >> "$GITHUB_PATH"
+        echo "$RUNNER_TEMP_DIR/agentshield" >> "$GITHUB_PATH"
     - name: Use provided AgentShield
       if: inputs.binary-path != ''
       shell: bash
@@ -167,19 +166,18 @@ runs:
           cp "$AGENTSHIELD_BINARY_PATH" "$AGENTSHIELD_DEST"
         fi
         chmod +x "$AGENTSHIELD_DEST"
-        safe_dir=$(printf '%s' "$(dirname "$AGENTSHIELD_DEST")" | tr -d '\n\r')
-        echo "$safe_dir" >> "$GITHUB_PATH"
+        echo "$(dirname "$AGENTSHIELD_DEST")" >> "$GITHUB_PATH"
     - name: Run scan
       id: scan
       shell: bash
       env:
-        RUNNER_TEMP_DIR: ${{ runner.temp }}
         INPUT_PATH: ${{ inputs.path }}
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_CONFIG: ${{ inputs.config }}
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_IGNORE_TESTS: ${{ inputs.ignore-tests }}
+        RUNNER_TEMP_DIR: ${{ runner.temp }}
       run: |
         SCAN_LOG="$RUNNER_TEMP_DIR/agentshield-scan.log"
         ARGS=(scan "$INPUT_PATH" --fail-on "$INPUT_FAIL_ON")
@@ -216,8 +214,7 @@ runs:
         fi
 
         echo "exit-code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
-        safe_sarif=$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')
-        echo "sarif-file=$safe_sarif" >> "$GITHUB_OUTPUT"
+        echo "sarif-file=$SARIF_FILE" >> "$GITHUB_OUTPUT"
 
         # Count findings from SARIF if available
         if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
@@ -263,7 +260,7 @@ runs:
         echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> "$GITHUB_ENV"
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.scan.outputs.sarif-file != ''
-      uses: chainguard-actions/github-codeql-action/upload-sarif@d8c1fe8e4e11b49fd288625d460f0e03a949312f # v4
+      uses: chainguard-actions/github-codeql-action/upload-sarif@af9a71138d91d5fb30bfcfc73aff470163092543 # v4
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: agentshield
@@ -273,16 +270,16 @@ runs:
       env:
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
         INPUT_STRICT: ${{ inputs.strict }}
-        SCAN_NO_ADAPTER: ${{ steps.scan.outputs.no_adapter }}
+        STEP_NO_ADAPTER: ${{ steps.scan.outputs.no_adapter }}
       run: |
         if [ "$AGENTSHIELD_EXIT" = "1" ]; then
           echo "::error::AgentShield found findings above the '$INPUT_FAIL_ON' threshold"
           exit 1
         elif [ "$AGENTSHIELD_EXIT" = "2" ]; then
-          if [ "$SCAN_NO_ADAPTER" = "true" ] && [ "$INPUT_STRICT" = "false" ]; then
+          if [ "$STEP_NO_ADAPTER" = "true" ] && [ "$INPUT_STRICT" = "false" ]; then
             echo "::warning::AgentShield found no supported adapter for the scanned path; non-blocking due strict=false"
             exit 0
-          elif [ "$SCAN_NO_ADAPTER" = "true" ]; then
+          elif [ "$STEP_NO_ADAPTER" = "true" ]; then
             echo "::error::AgentShield encountered a scan error: No suitable adapter found"
             exit 2
           else
