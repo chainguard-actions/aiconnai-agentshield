@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "AgentShield detector and scanner test fixtures"
+paths = [
+    '''tests/.*''',
+    '''src/rules/builtin/hardcoded_secrets\.rs''',
+    '''src/rules/builtin/sensitive_schema_reflection\.rs''',
+    '''docs/site\.js''',
+]
