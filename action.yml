@@ -1,9 +1,11 @@
 name: 'AgentShield Security Scanner'
 description: 'Scan supported AI agent extension frameworks for security vulnerabilities'
 author: 'Ronaldo Lima'
+
 branding:
   icon: 'shield'
   color: 'blue'
+
 inputs:
   path:
     description: 'Path to scan (relative to repo root)'
@@ -33,6 +35,7 @@ inputs:
     description: 'AgentShield version to use (default: latest)'
     required: false
     default: 'latest'
+
 outputs:
   finding-count:
     description: 'Number of findings detected'
@@ -43,6 +46,7 @@ outputs:
   exit-code:
     description: 'Exit code from the scan (0=pass, 1=fail, 2=error)'
     value: ${{ steps.scan.outputs.exit-code }}
+
 runs:
   using: 'composite'
   steps:
@@ -78,47 +82,50 @@ runs:
         else
           VERSION="$INPUT_VERSION"
         fi
-        safe_version="$(printf '%s' "$VERSION" | tr -d '\n\r')"
-        echo "version=$safe_version" >> "$GITHUB_OUTPUT"
+        SAFE_VERSION=$(printf '%s' "$VERSION" | tr -d '\n\r')
+        echo "version=$SAFE_VERSION" >> "$GITHUB_OUTPUT"
+
     - name: Determine platform
       id: platform
       shell: bash
       env:
-        RUNNER_OS: ${{ runner.os }}
-        RUNNER_ARCH: ${{ runner.arch }}
+        RUNNER_OS_NAME: ${{ runner.os }}
+        RUNNER_ARCH_NAME: ${{ runner.arch }}
       run: |
-        case "$RUNNER_OS-$RUNNER_ARCH" in
+        case "${RUNNER_OS_NAME}-${RUNNER_ARCH_NAME}" in
           Linux-X64)   TARGET="x86_64-unknown-linux-gnu" ;;
           Linux-ARM64) TARGET="aarch64-unknown-linux-gnu" ;;
           macOS-X64)   TARGET="x86_64-apple-darwin" ;;
           macOS-ARM64) TARGET="aarch64-apple-darwin" ;;
           Windows-X64) TARGET="x86_64-pc-windows-msvc" ;;
-          *) echo "::error::Unsupported platform: $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
+          *) echo "::error::Unsupported platform: ${RUNNER_OS_NAME}-${RUNNER_ARCH_NAME}"; exit 1 ;;
         esac
         echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+
     - name: Download AgentShield
       shell: bash
       env:
         VERSION: ${{ steps.version.outputs.version }}
         TARGET: ${{ steps.platform.outputs.target }}
-        RUNNER_TEMP: ${{ runner.temp }}
+        RUNNER_TEMP_DIR: ${{ runner.temp }}
       run: |
         BASE_URL="https://github.com/limaronaldo/agentshield/releases/download/${VERSION}"
 
         if [[ "$TARGET" == *"windows"* ]]; then
           ARCHIVE="agentshield-${VERSION}-${TARGET}.zip"
           curl -fsSL "${BASE_URL}/${ARCHIVE}" -o agentshield.zip
-          unzip -o agentshield.zip -d "$RUNNER_TEMP/agentshield"
+          unzip -o agentshield.zip -d "$RUNNER_TEMP_DIR/agentshield"
         else
           ARCHIVE="agentshield-${VERSION}-${TARGET}.tar.gz"
           curl -fsSL "${BASE_URL}/${ARCHIVE}" -o agentshield.tar.gz
-          mkdir -p "$RUNNER_TEMP/agentshield"
-          tar xzf agentshield.tar.gz -C "$RUNNER_TEMP/agentshield"
+          mkdir -p "$RUNNER_TEMP_DIR/agentshield"
+          tar xzf agentshield.tar.gz -C "$RUNNER_TEMP_DIR/agentshield"
         fi
 
-        chmod +x "$RUNNER_TEMP/agentshield/agentshield"* 2>/dev/null || true
-        safe_path="$(printf '%s' "$RUNNER_TEMP/agentshield" | tr -d '\n\r')"
-        echo "$safe_path" >> "$GITHUB_PATH"
+        chmod +x "$RUNNER_TEMP_DIR"/agentshield/agentshield* 2>/dev/null || true
+        SAFE_PATH=$(printf '%s' "$RUNNER_TEMP_DIR/agentshield" | tr -d '\n\r')
+        echo "$SAFE_PATH" >> "$GITHUB_PATH"
+
     - name: Run scan
       id: scan
       shell: bash
@@ -128,13 +135,13 @@ runs:
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_CONFIG: ${{ inputs.config }}
         INPUT_IGNORE_TESTS: ${{ inputs.ignore-tests }}
-        RUNNER_TEMP: ${{ runner.temp }}
+        RUNNER_TEMP_DIR: ${{ runner.temp }}
       run: |
         ARGS=(scan "$INPUT_PATH" --fail-on "$INPUT_FAIL_ON")
 
         SARIF_FILE=""
         if [ "$INPUT_FORMAT" = "sarif" ]; then
-          SARIF_FILE="$RUNNER_TEMP/agentshield-results.sarif"
+          SARIF_FILE="$RUNNER_TEMP_DIR/agentshield-results.sarif"
           ARGS+=(--format sarif --output "$SARIF_FILE")
         else
           ARGS+=(--format "$INPUT_FORMAT")
@@ -153,9 +160,9 @@ runs:
         EXIT_CODE=$?
         set -e
 
+        SAFE_SARIF=$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')
         echo "exit-code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
-        safe_sarif="$(printf '%s' "$SARIF_FILE" | tr -d '\n\r')"
-        echo "sarif-file=$safe_sarif" >> "$GITHUB_OUTPUT"
+        echo "sarif-file=$SAFE_SARIF" >> "$GITHUB_OUTPUT"
 
         # Count findings from SARIF if available
         if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
@@ -167,20 +174,22 @@ runs:
 
         # Don't fail here — let the upload step run first
         echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> "$GITHUB_ENV"
+
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.scan.outputs.sarif-file != ''
-      uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
+      uses: github/codeql-action/upload-sarif@4bfa242aa49c5f7c6770b98670d354a7dfac05f8 # v3
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: agentshield
       continue-on-error: true
+
     - name: Check result
       shell: bash
       env:
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
       run: |
         if [ "$AGENTSHIELD_EXIT" = "1" ]; then
-          echo "::error::AgentShield found findings above the '$INPUT_FAIL_ON' threshold"
+          echo "::error::AgentShield found findings above the '${INPUT_FAIL_ON}' threshold"
           exit 1
         elif [ "$AGENTSHIELD_EXIT" = "2" ]; then
           echo "::error::AgentShield encountered a scan error"
