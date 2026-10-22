@@ -109,37 +109,31 @@ runs:
             exit 1
           fi
         fi
-        safe_version=$(printf '%s' "$VERSION" | tr -d '\n\r')
-        echo "version=$safe_version" >> $GITHUB_OUTPUT
+        SAFE_VERSION=$(printf '%s' "$VERSION" | tr -d '\n\r')
+        echo "version=$SAFE_VERSION" >> "$GITHUB_OUTPUT"
 
     - name: Determine platform
       if: inputs.binary-path == ''
       id: platform
       shell: bash
-      env:
-        RUNNER_OS: ${{ runner.os }}
-        RUNNER_ARCH: ${{ runner.arch }}
       run: |
-        case "$RUNNER_OS-$RUNNER_ARCH" in
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
           Linux-X64)   TARGET="x86_64-unknown-linux-gnu" ;;
           Linux-ARM64) TARGET="aarch64-unknown-linux-gnu" ;;
           macOS-X64)   TARGET="x86_64-apple-darwin" ;;
           macOS-ARM64) TARGET="aarch64-apple-darwin" ;;
           Windows-X64) TARGET="x86_64-pc-windows-msvc" ;;
-          *) echo "::error::Unsupported platform: $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
+          *) echo "::error::Unsupported platform: ${RUNNER_OS}-${RUNNER_ARCH}"; exit 1 ;;
         esac
-        echo "target=$TARGET" >> $GITHUB_OUTPUT
+        echo "target=$TARGET" >> "$GITHUB_OUTPUT"
 
     - name: Download AgentShield
       if: inputs.binary-path == ''
       shell: bash
       env:
-        STEP_VERSION: ${{ steps.version.outputs.version }}
-        STEP_TARGET: ${{ steps.platform.outputs.target }}
-        RUNNER_TEMP: ${{ runner.temp }}
+        VERSION: ${{ steps.version.outputs.version }}
+        TARGET: ${{ steps.platform.outputs.target }}
       run: |
-        VERSION="$STEP_VERSION"
-        TARGET="$STEP_TARGET"
         BASE_URL="https://github.com/aiconnai/agentshield/releases/download/${VERSION}"
 
         if [[ "$TARGET" == *"windows"* ]]; then
@@ -153,16 +147,14 @@ runs:
           tar xzf agentshield.tar.gz -C "$RUNNER_TEMP/agentshield"
         fi
 
-        chmod +x "$RUNNER_TEMP/agentshield/agentshield"* 2>/dev/null || true
-        safe_path=$(printf '%s' "$RUNNER_TEMP/agentshield" | tr -d '\n\r')
-        echo "$safe_path" >> $GITHUB_PATH
+        chmod +x "$RUNNER_TEMP"/agentshield/agentshield* 2>/dev/null || true
+        echo "$RUNNER_TEMP/agentshield" >> "$GITHUB_PATH"
 
     - name: Use provided AgentShield
       if: inputs.binary-path != ''
       shell: bash
       env:
         AGENTSHIELD_BINARY_PATH: ${{ inputs.binary-path }}
-        RUNNER_TEMP: ${{ runner.temp }}
       run: |
         if [ ! -x "$AGENTSHIELD_BINARY_PATH" ]; then
           echo "::error::Provided AgentShield binary is not executable: $AGENTSHIELD_BINARY_PATH"
@@ -174,14 +166,12 @@ runs:
           cp "$AGENTSHIELD_BINARY_PATH" "$AGENTSHIELD_DEST"
         fi
         chmod +x "$AGENTSHIELD_DEST"
-        safe_path=$(printf '%s' "$(dirname "$AGENTSHIELD_DEST")" | tr -d '\n\r')
-        echo "$safe_path" >> $GITHUB_PATH
+        echo "$(dirname "$AGENTSHIELD_DEST")" >> "$GITHUB_PATH"
 
     - name: Run scan
       id: scan
       shell: bash
       env:
-        RUNNER_TEMP: ${{ runner.temp }}
         INPUT_PATH: ${{ inputs.path }}
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
         INPUT_FORMAT: ${{ inputs.format }}
@@ -218,18 +208,18 @@ runs:
         set -e
 
         if grep -Fq "No suitable adapter found for directory:" "$SCAN_LOG"; then
-          echo "no_adapter=true" >> $GITHUB_OUTPUT
+          echo "no_adapter=true" >> "$GITHUB_OUTPUT"
         else
-          echo "no_adapter=false" >> $GITHUB_OUTPUT
+          echo "no_adapter=false" >> "$GITHUB_OUTPUT"
         fi
 
-        echo "exit-code=$EXIT_CODE" >> $GITHUB_OUTPUT
-        echo "sarif-file=$SARIF_FILE" >> $GITHUB_OUTPUT
+        echo "exit-code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+        echo "sarif-file=$SARIF_FILE" >> "$GITHUB_OUTPUT"
 
         # Count findings from SARIF if available
         if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
-          COUNT=$(python3 -c "import json; d=json.load(open('$SARIF_FILE')); print(len(d.get('runs',[{}])[0].get('results',[])))" 2>/dev/null || echo "0")
-          echo "finding-count=$COUNT" >> $GITHUB_OUTPUT
+          COUNT=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(len(d.get('runs',[{}])[0].get('results',[])))" "$SARIF_FILE" 2>/dev/null || echo "0")
+          echo "finding-count=$COUNT" >> "$GITHUB_OUTPUT"
           if [ "$EXIT_CODE" = "1" ]; then
             echo "::group::AgentShield findings"
             python3 - "$SARIF_FILE" <<'PY'
@@ -263,15 +253,15 @@ runs:
             echo "::endgroup::"
           fi
         else
-          echo "finding-count=0" >> $GITHUB_OUTPUT
+          echo "finding-count=0" >> "$GITHUB_OUTPUT"
         fi
 
         # Don't fail here — let the upload step run first
-        echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> $GITHUB_ENV
+        echo "AGENTSHIELD_EXIT=$EXIT_CODE" >> "$GITHUB_ENV"
 
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true' && inputs.format == 'sarif' && steps.scan.outputs.sarif-file != ''
-      uses: chainguard-actions/github-codeql-action/upload-sarif@af9a71138d91d5fb30bfcfc73aff470163092543 # v4
+      uses: chainguard-actions/github-codeql-action/upload-sarif@fb4cd6516f031c131efd4b91cb7a4ab5975a11ae # v4
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
         category: agentshield
@@ -282,16 +272,16 @@ runs:
       env:
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
         INPUT_STRICT: ${{ inputs.strict }}
-        STEP_NO_ADAPTER: ${{ steps.scan.outputs.no_adapter }}
+        NO_ADAPTER: ${{ steps.scan.outputs.no_adapter }}
       run: |
         if [ "$AGENTSHIELD_EXIT" = "1" ]; then
           echo "::error::AgentShield found findings above the '$INPUT_FAIL_ON' threshold"
           exit 1
         elif [ "$AGENTSHIELD_EXIT" = "2" ]; then
-          if [ "$STEP_NO_ADAPTER" = "true" ] && [ "$INPUT_STRICT" = "false" ]; then
+          if [ "$NO_ADAPTER" = "true" ] && [ "$INPUT_STRICT" = "false" ]; then
             echo "::warning::AgentShield found no supported adapter for the scanned path; non-blocking due strict=false"
             exit 0
-          elif [ "$STEP_NO_ADAPTER" = "true" ]; then
+          elif [ "$NO_ADAPTER" = "true" ]; then
             echo "::error::AgentShield encountered a scan error: No suitable adapter found"
             exit 2
           else
