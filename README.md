@@ -6,20 +6,20 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 
 ## Versions
 
-| Version | Tag | Upstream commit |
-|---------|-----|-----------------|
-| v0.8.3 | [`v0.8.3`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.3) | [`cd75472`](https://github.com/aiconnai/agentshield/commit/cd75472056e3af32c8031ce14f01a17a31a2abe9) |
-| v0.8.4 | [`v0.8.4`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.4) | [`8113402`](https://github.com/aiconnai/agentshield/commit/811340251f979f99cb7cb82162a3c62d70937177) |
-| v0.8.5 | [`v0.8.5`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.5) | [`dd1554d`](https://github.com/aiconnai/agentshield/commit/dd1554dc3219f681a589ad65b3d2e59fe1076bd0) |
-| v0.8.6 | [`v0.8.6`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.6) | [`b8de02a`](https://github.com/aiconnai/agentshield/commit/b8de02a7182892028df56f65552674a0497e212e) |
-| v0.8.7 | [`v0.8.7`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.7) | [`a1a5711`](https://github.com/aiconnai/agentshield/commit/a1a571197211793422d31811be3d7735dae0a30a) |
-| v0.8.8 | [`v0.8.8`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.8) | [`199f866`](https://github.com/aiconnai/agentshield/commit/199f8661c7a8102c66f0987b234166036b3f798d) |
-| v0.9.0 | [`v0.9.0`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.9.0) | [`faf2923`](https://github.com/aiconnai/agentshield/commit/faf2923cb94d1f89ad649ab12ac80544fc626016) |
-| v0.9.1 | [`v0.9.1`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.9.1) | [`cad2c40`](https://github.com/aiconnai/agentshield/commit/cad2c40f4d474e21e9e365d9c0249ccc21cbe347) |
-| v0.9.3 | [`v0.9.3`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.9.3) | [`80a16f2`](https://github.com/aiconnai/agentshield/commit/80a16f2f53e03cd1200a51ae89704e324d511cc9) |
-| v1.0.0 | [`v1.0.0`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v1.0.0) | [`a515977`](https://github.com/aiconnai/agentshield/commit/a5159774b8168daf73150b5c2f16ac5c8d83558c) |
-| v1.0.1 | [`v1.0.1`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v1.0.1) | [`401f1ef`](https://github.com/aiconnai/agentshield/commit/401f1ef44cfb7576777336a2016f6503477f88b7) |
-| v1.0.2 | [`v1.0.2`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v1.0.2) | [`7aa2839`](https://github.com/aiconnai/agentshield/commit/7aa2839be842e11417da9679e4a04055d9e452ce) |
+| Version | Tag | Upstream commit | Hardening report |
+|---------|-----|-----------------|------------------|
+| v0.8.3 | [`v0.8.3`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.3) | [`cd75472`](https://github.com/aiconnai/agentshield/commit/cd75472056e3af32c8031ce14f01a17a31a2abe9) | [`HARDENING.md`](https://github.com/chainguard-actions/aiconnai-agentshield/blob/v0.8.3/HARDENING.md) |
+| v0.8.4 | [`v0.8.4`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.4) | [`8113402`](https://github.com/aiconnai/agentshield/commit/811340251f979f99cb7cb82162a3c62d70937177) | [`HARDENING.md`](https://github.com/chainguard-actions/aiconnai-agentshield/blob/v0.8.4/HARDENING.md) |
+| v0.8.5 | [`v0.8.5`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.5) | [`dd1554d`](https://github.com/aiconnai/agentshield/commit/dd1554dc3219f681a589ad65b3d2e59fe1076bd0) | [`HARDENING.md`](https://github.com/chainguard-actions/aiconnai-agentshield/blob/v0.8.5/HARDENING.md) |
+| v0.8.6 | [`v0.8.6`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.6) | [`b8de02a`](https://github.com/aiconnai/agentshield/commit/b8de02a7182892028df56f65552674a0497e212e) | [`HARDENING.md`](https://github.com/chainguard-actions/aiconnai-agentshield/blob/v0.8.6/HARDENING.md) |
+| v0.8.7 | [`v0.8.7`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.7) | [`a1a5711`](https://github.com/aiconnai/agentshield/commit/a1a571197211793422d31811be3d7735dae0a30a) | [`HARDENING.md`](https://github.com/chainguard-actions/aiconnai-agentshield/blob/v0.8.7/HARDENING.md) |
+| v0.8.8 | [`v0.8.8`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.8.8) | [`199f866`](https://github.com/aiconnai/agentshield/commit/199f8661c7a8102c66f0987b234166036b3f798d) | [`HARDENING.md`](https://github.com/chainguard-actions/aiconnai-agentshield/blob/v0.8.8/HARDENING.md) |
+| v0.9.0 | [`v0.9.0`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.9.0) | [`faf2923`](https://github.com/aiconnai/agentshield/commit/faf2923cb94d1f89ad649ab12ac80544fc626016) | [`HARDENING.md`](https://github.com/chainguard-actions/aiconnai-agentshield/blob/v0.9.0/HARDENING.md) |
+| v0.9.1 | [`v0.9.1`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.9.1) | [`cad2c40`](https://github.com/aiconnai/agentshield/commit/cad2c40f4d474e21e9e365d9c0249ccc21cbe347) | [`HARDENING.md`](https://github.com/chainguard-actions/aiconnai-agentshield/blob/v0.9.1/HARDENING.md) |
+| v0.9.3 | [`v0.9.3`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v0.9.3) | [`80a16f2`](https://github.com/aiconnai/agentshield/commit/80a16f2f53e03cd1200a51ae89704e324d511cc9) | [`HARDENING.md`](https://github.com/chainguard-actions/aiconnai-agentshield/blob/v0.9.3/HARDENING.md) |
+| v1.0.0 | [`v1.0.0`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v1.0.0) | [`a515977`](https://github.com/aiconnai/agentshield/commit/a5159774b8168daf73150b5c2f16ac5c8d83558c) | [`HARDENING.md`](https://github.com/chainguard-actions/aiconnai-agentshield/blob/v1.0.0/HARDENING.md) |
+| v1.0.1 | [`v1.0.1`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v1.0.1) | [`401f1ef`](https://github.com/aiconnai/agentshield/commit/401f1ef44cfb7576777336a2016f6503477f88b7) | [`HARDENING.md`](https://github.com/chainguard-actions/aiconnai-agentshield/blob/v1.0.1/HARDENING.md) |
+| v1.0.2 | [`v1.0.2`](https://github.com/chainguard-actions/aiconnai-agentshield/tree/v1.0.2) | [`7aa2839`](https://github.com/aiconnai/agentshield/commit/7aa2839be842e11417da9679e4a04055d9e452ce) | [`HARDENING.md`](https://github.com/chainguard-actions/aiconnai-agentshield/blob/v1.0.2/HARDENING.md) |
 
 ## Privacy
 
