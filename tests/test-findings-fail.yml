@@ -1,0 +1,45 @@
+name: Test findings above threshold fail the action
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create fake agentshield binary that reports findings
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake"
+          cat > "$RUNNER_TEMP/fake/agentshield" <<'EOF'
+          #!/usr/bin/env bash
+          out=""; prev=""
+          for a in "$@"; do
+            if [ "$prev" = "--output" ]; then out="$a"; fi
+            prev="$a"
+          done
+          if [ -n "$out" ]; then
+            cat > "$out" <<'SARIF'
+          {"version":"2.1.0","runs":[{"tool":{"driver":{"name":"agentshield"}},"results":[
+          {"ruleId":"SHIELD-001","level":"error","message":{"text":"bad thing"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"x.ts"},"region":{"startLine":3}}}]}]}]}
+          SARIF
+          fi
+          exit 1
+          EOF
+          chmod +x "$RUNNER_TEMP/fake/agentshield"
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          binary-path: ${{ runner.temp }}/fake/agentshield
+          upload-sarif: 'false'
+          fail-on: medium
+      - name: Assert action failed with findings
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          COUNT: ${{ steps.action.outputs.finding-count }}
+          EXIT: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "outcome=$OUTCOME count=$COUNT exit=$EXIT"
+          [ "$OUTCOME" = "failure" ] || { echo "FAIL: expected failure"; exit 1; }
+          if [ -n "$EXIT" ] && [ "$EXIT" != "1" ]; then echo "FAIL: expected exit-code 1"; exit 1; fi
+          if [ -n "$COUNT" ] && [ "$COUNT" != "1" ]; then echo "FAIL: expected finding-count 1"; exit 1; fi
+          echo "PASS"

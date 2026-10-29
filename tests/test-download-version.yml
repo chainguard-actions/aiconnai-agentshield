@@ -1,0 +1,30 @@
+name: Test downloading a pinned release (version without v prefix)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create empty scan directory
+        run: mkdir -p empty-scan-dir
+      - id: action
+        uses: .
+        with:
+          version: '0.9.3'
+          path: empty-scan-dir
+          strict: 'false'
+          upload-sarif: 'false'
+          format: json
+      - name: Assert real binary ran
+        env:
+          EXIT: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "exit=$EXIT"
+          ls -la "$RUNNER_TEMP/agentshield" || true
+          if [ "$EXIT" != "0" ] && [ "$EXIT" != "2" ]; then
+            echo "FAIL: expected exit-code 0 or 2 (127 means binary not downloaded)"
+            exit 1
+          fi
+          [ -x "$RUNNER_TEMP/agentshield/agentshield" ] || { echo "FAIL: binary not installed"; exit 1; }
+          echo "PASS"

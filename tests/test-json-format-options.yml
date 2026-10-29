@@ -1,0 +1,42 @@
+name: Test json format with config, baseline and ignore-tests
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create fake agentshield binary
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake"
+          cat > "$RUNNER_TEMP/fake/agentshield" <<'EOF'
+          #!/usr/bin/env bash
+          echo "$@" > /tmp/agentshield-args.txt
+          echo '{"findings":[]}'
+          exit 0
+          EOF
+          chmod +x "$RUNNER_TEMP/fake/agentshield"
+      - id: action
+        uses: .
+        with:
+          binary-path: ${{ runner.temp }}/fake/agentshield
+          path: src
+          format: json
+          fail-on: critical
+          config: my.agentshield.toml
+          baseline: baseline.json
+          ignore-tests: 'true'
+      - name: Assert outputs and args
+        env:
+          COUNT: ${{ steps.action.outputs.finding-count }}
+          EXIT: ${{ steps.action.outputs.exit-code }}
+          SARIF: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          ARGS="$(cat /tmp/agentshield-args.txt)"
+          echo "count=$COUNT exit=$EXIT sarif='$SARIF' args=$ARGS"
+          [ "$EXIT" = "0" ] || { echo "FAIL: expected exit-code 0"; exit 1; }
+          [ "$COUNT" = "0" ] || { echo "FAIL: expected finding-count 0"; exit 1; }
+          [ -z "$SARIF" ] || { echo "FAIL: expected empty sarif-file"; exit 1; }
+          EXPECTED="scan src --fail-on critical --format json --config my.agentshield.toml --baseline baseline.json --ignore-tests"
+          [ "$ARGS" = "$EXPECTED" ] || { echo "FAIL: expected args '$EXPECTED'"; exit 1; }
+          echo "PASS"

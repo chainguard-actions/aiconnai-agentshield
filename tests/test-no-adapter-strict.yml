@@ -1,0 +1,32 @@
+name: Test no adapter fails with strict=true
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create fake agentshield binary with no adapter
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake"
+          cat > "$RUNNER_TEMP/fake/agentshield" <<'EOF'
+          #!/usr/bin/env bash
+          echo "Error: No suitable adapter found for directory: ." >&2
+          exit 2
+          EOF
+          chmod +x "$RUNNER_TEMP/fake/agentshield"
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          binary-path: ${{ runner.temp }}/fake/agentshield
+          upload-sarif: 'false'
+      - name: Assert action failed
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          EXIT: ${{ steps.action.outputs.exit-code }}
+        run: |
+          echo "outcome=$OUTCOME exit=$EXIT"
+          [ "$OUTCOME" = "failure" ] || { echo "FAIL: expected failure"; exit 1; }
+          if [ -n "$EXIT" ] && [ "$EXIT" != "2" ]; then echo "FAIL: expected exit-code 2"; exit 1; fi
+          echo "PASS"

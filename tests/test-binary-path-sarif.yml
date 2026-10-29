@@ -1,0 +1,48 @@
+name: Test provided binary with SARIF output
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create fake agentshield binary
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake"
+          cat > "$RUNNER_TEMP/fake/agentshield" <<'EOF'
+          #!/usr/bin/env bash
+          echo "$@" > /tmp/agentshield-args.txt
+          out=""; prev=""
+          for a in "$@"; do
+            if [ "$prev" = "--output" ]; then out="$a"; fi
+            prev="$a"
+          done
+          if [ -n "$out" ]; then
+            cat > "$out" <<'SARIF'
+          {"version":"2.1.0","runs":[{"tool":{"driver":{"name":"agentshield"}},"results":[
+          {"ruleId":"R1","level":"warning","message":{"text":"one"}},
+          {"ruleId":"R2","level":"note","message":{"text":"two"}}]}]}
+          SARIF
+          fi
+          echo "scan complete"
+          exit 0
+          EOF
+          chmod +x "$RUNNER_TEMP/fake/agentshield"
+      - id: action
+        uses: .
+        with:
+          binary-path: ${{ runner.temp }}/fake/agentshield
+          upload-sarif: 'false'
+      - name: Assert outputs
+        env:
+          COUNT: ${{ steps.action.outputs.finding-count }}
+          EXIT: ${{ steps.action.outputs.exit-code }}
+          SARIF: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "count=$COUNT exit=$EXIT sarif=$SARIF"
+          echo "args: $(cat /tmp/agentshield-args.txt)"
+          [ "$COUNT" = "2" ] || { echo "FAIL: expected finding-count 2"; exit 1; }
+          [ "$EXIT" = "0" ] || { echo "FAIL: expected exit-code 0"; exit 1; }
+          [ -n "$SARIF" ] && [ -f "$SARIF" ] || { echo "FAIL: sarif file missing"; exit 1; }
+          grep -q -- "scan . --fail-on high --format sarif --output $SARIF" /tmp/agentshield-args.txt || { echo "FAIL: unexpected args"; exit 1; }
+          echo "PASS"
