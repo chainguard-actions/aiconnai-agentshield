@@ -1,0 +1,61 @@
+name: Test basic scan with no findings (binary-path)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create fake agentshield binary
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake"
+          cat > "$RUNNER_TEMP/fake/agentshield" <<'EOF'
+          #!/bin/bash
+          echo "$@" > /tmp/agentshield-args.log
+          out=""; prev=""
+          for a in "$@"; do
+            if [ "$prev" = "--output" ]; then out="$a"; fi
+            prev="$a"
+          done
+          if [ -n "$out" ]; then
+            printf '%s' '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"agentshield"}},"results":[]}]}' > "$out"
+          fi
+          echo "Scan complete: 0 findings"
+          exit 0
+          EOF
+          chmod +x "$RUNNER_TEMP/fake/agentshield"
+      # continue-on-error: under act the composite's pinned github/codeql-action
+      # reference cannot be resolved ("reference not found"), which marks the
+      # composite as failed even though every shell step succeeds. The outputs
+      # below are still validated strictly.
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          binary-path: ${{ runner.temp }}/fake/agentshield
+          upload-sarif: 'false'
+      - name: Assert outputs
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+          COUNT: ${{ steps.action.outputs.finding-count }}
+          SARIF: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "exit-code: $EXIT_CODE"
+          echo "finding-count: $COUNT"
+          echo "sarif-file: $SARIF"
+          if [ "$OUTCOME" != "success" ] && [ "$OUTCOME" != "failure" ]; then echo "FAIL: unexpected outcome"; exit 1; fi
+          if [ ! -f /tmp/agentshield-args.log ]; then echo "FAIL: scanner was not invoked"; exit 1; fi
+          ARGS="$(cat /tmp/agentshield-args.log)"
+          echo "args: $ARGS"
+          if [ "$EXIT_CODE" != "0" ]; then echo "FAIL: exit-code should be 0"; exit 1; fi
+          if [ "$COUNT" != "0" ]; then echo "FAIL: finding-count should be 0"; exit 1; fi
+          if [ -z "$SARIF" ] || [ ! -f "$SARIF" ]; then echo "FAIL: sarif file missing"; exit 1; fi
+          case "$SARIF" in
+            *agentshield-results.sarif) ;;
+            *) echo "FAIL: unexpected sarif path"; exit 1 ;;
+          esac
+          echo "$ARGS" | grep -q -- "^scan \. --fail-on high --format sarif --output " || { echo "FAIL: unexpected args"; exit 1; }
+          if [ ! -x "$RUNNER_TEMP/agentshield/agentshield" ]; then echo "FAIL: binary not installed to temp dir"; exit 1; fi
+          echo "PASS"

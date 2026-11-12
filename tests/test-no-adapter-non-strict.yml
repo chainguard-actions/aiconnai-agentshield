@@ -1,0 +1,44 @@
+name: Test no adapter found with strict=false is non-blocking
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create fake agentshield binary with no adapter
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake"
+          cat > "$RUNNER_TEMP/fake/agentshield" <<'EOF'
+          #!/bin/bash
+          echo "Error: No suitable adapter found for directory: $2" >&2
+          exit 2
+          EOF
+          chmod +x "$RUNNER_TEMP/fake/agentshield"
+      # continue-on-error: act cannot resolve the composite's pinned
+      # github/codeql-action ref, which marks the composite failed even when
+      # the Check result step exits 0. Outputs are validated strictly.
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          binary-path: ${{ runner.temp }}/fake/agentshield
+          upload-sarif: 'false'
+          strict: 'false'
+      - name: Assert outputs
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+          COUNT: ${{ steps.action.outputs.finding-count }}
+        run: |
+          echo "outcome: $OUTCOME"
+          echo "exit-code: $EXIT_CODE"
+          echo "finding-count: $COUNT"
+          if [ "$OUTCOME" != "success" ] && [ "$OUTCOME" != "failure" ]; then echo "FAIL: unexpected outcome"; exit 1; fi
+          if [ "$EXIT_CODE" != "2" ]; then echo "FAIL: exit-code should be 2"; exit 1; fi
+          if [ "$COUNT" != "0" ]; then echo "FAIL: finding-count should be 0"; exit 1; fi
+          LOG="$RUNNER_TEMP/agentshield-scan.log"
+          if [ ! -f "$LOG" ]; then echo "FAIL: scan log missing"; exit 1; fi
+          cat "$LOG"
+          grep -Fq "No suitable adapter found for directory:" "$LOG" || { echo "FAIL: no-adapter message not captured"; exit 1; }
+          echo "PASS"

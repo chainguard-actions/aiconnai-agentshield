@@ -1,0 +1,11 @@
+[scan]
+# Skip test files (tests/, __tests__/, *.test.ts, etc.) before parsing.
+ignore_tests = true
+
+# docs/ contains prose that documents detector patterns and harness scripts.
+# vscode/ is a VS Code client extension (UI prompts).
+# python/ is the PyPI CLI wrapper that invokes the agentshield binary.
+# skills/ and install.sh are installation and agent guidance scripts.
+# .github/ holds CI and release scripts (dot-directories are scanned by default).
+exclude = ["docs/**", "vscode/**", "skills/**", "python/**", "install.sh", ".github/**"]
+
