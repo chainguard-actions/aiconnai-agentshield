@@ -1,0 +1,50 @@
+name: Test json format with config, baseline and ignore-tests
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install fake agentshield
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake"
+          cp tests/fixtures/fake-agentshield.sh "$RUNNER_TEMP/fake/agentshield"
+          chmod +x "$RUNNER_TEMP/fake/agentshield"
+          echo clean > /tmp/fake-agentshield-mode
+          rm -f /tmp/fake-agentshield-args.log
+      # act tries to resolve the skipped upload-sarif remote action, whose pinned
+      # ref is unresolvable under act; tolerate that and assert on outputs.
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          binary-path: ${{ runner.temp }}/fake/agentshield
+          path: tests
+          format: json
+          config: my-config.toml
+          baseline: my-baseline.json
+          ignore-tests: 'true'
+          fail-on: critical
+      - name: Assert outputs and args
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+          COUNT: ${{ steps.action.outputs.finding-count }}
+          SARIF: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "outcome: $OUTCOME exit-code: $EXIT_CODE count: $COUNT sarif: '$SARIF'"
+          case "$OUTCOME" in
+            success|failure) ;;
+            *) echo "FAIL: unexpected outcome '$OUTCOME'"; exit 1 ;;
+          esac
+          [ "$EXIT_CODE" = "0" ] || { echo "FAIL: exit-code"; exit 1; }
+          [ "$COUNT" = "0" ] || { echo "FAIL: finding-count"; exit 1; }
+          [ -z "$SARIF" ] || { echo "FAIL: sarif-file should be empty"; exit 1; }
+          ARGS="$(cat /tmp/fake-agentshield-args.log)"
+          echo "args: $ARGS"
+          for want in "scan tests" "--fail-on critical" "--format json" "--config my-config.toml" "--baseline my-baseline.json" "--ignore-tests"; do
+            echo "$ARGS" | grep -q -- "$want" || { echo "FAIL: missing '$want'"; exit 1; }
+          done
+          if echo "$ARGS" | grep -q -- "--output"; then echo "FAIL: unexpected --output"; exit 1; fi
+          echo "PASS"

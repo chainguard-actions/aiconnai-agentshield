@@ -1,0 +1,6 @@
+src/rules/builtin/hardcoded_secrets.rs
+src/rules/builtin/sensitive_schema_reflection.rs
+tests/runtime_redaction.rs
+tests/runtime_guard.rs
+docs/site.js
+tests/fixtures/

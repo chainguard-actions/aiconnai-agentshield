@@ -1,0 +1,799 @@
+//! DSSE envelope and in-toto attestation payload types.
+//!
+//! Implements the DSSE specification (<https://github.com/secure-systems-lab/dsse>)
+//! wrapping an in-toto Statement v1 (<https://in-toto.io/Statement/v1>) with an
+//! AgentShield-specific predicate.
+//!
+//! # Predicate versions
+//!
+//! - [`PREDICATE_TYPE`] (`.../attestation/v2`, written by this release): the
+//!   subject digest is the content-bound source manifest digest of
+//!   [`crate::certify::subject`], and signatures cover the DSSE PAE of the raw
+//!   payload bytes, as the DSSE protocol specifies.
+//! - [`LEGACY_PREDICATE_TYPE`] (`.../attestation/v1`, AgentShield 1.0.2 and
+//!   earlier): the subject digest is the SHA-256 of the scan directory name,
+//!   and signatures cover a non-standard PAE computed over the base64 payload
+//!   text. [`DsseEnvelope::verify_detailed`] still verifies these, and reports
+//!   them as [`DsseVerification::VerifiedLegacy`]; the legacy encoding is
+//!   never accepted for a v2 predicate.
+
+use std::collections::HashMap;
+use std::path::Path;
+
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use serde::{Deserialize, Serialize};
+
+use crate::ir::ScanTarget;
+use crate::rules::finding::Finding;
+use crate::rules::policy::Suppression;
+
+/// DSSE payload type of the in-toto statement.
+pub const PAYLOAD_TYPE: &str = "application/vnd.in-toto+json";
+
+/// Predicate type written by this release (content-bound subject digest,
+/// standard DSSE PAE).
+pub const PREDICATE_TYPE: &str = "https://agentshield.dev/attestation/v2";
+
+/// Predicate type written by AgentShield 1.0.2 and earlier.
+pub const LEGACY_PREDICATE_TYPE: &str = "https://agentshield.dev/attestation/v1";
+
+/// Outcome of [`DsseEnvelope::verify_detailed`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DsseVerification {
+    /// The envelope carries no signatures.
+    Unsigned,
+    /// Every signature verifies over the standard DSSE PAE of the payload.
+    Verified,
+    /// Every signature verifies, and at least one only over the legacy
+    /// (pre-v2, non-standard) PAE of a [`LEGACY_PREDICATE_TYPE`] payload.
+    /// Standard DSSE verifiers reject such envelopes.
+    VerifiedLegacy,
+}
+
+// ---------------------------------------------------------------------------
+// DSSE envelope
+// ---------------------------------------------------------------------------
+
+/// DSSE envelope per <https://github.com/secure-systems-lab/dsse>.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DsseEnvelope {
+    #[serde(rename = "payloadType")]
+    pub payload_type: String,
+    /// Base64-encoded JSON payload.
+    pub payload: String,
+    pub signatures: Vec<DsseSignature>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DsseSignature {
+    pub keyid: String,
+    /// Base64-encoded Ed25519 signature.
+    pub sig: String,
+}
+
+// ---------------------------------------------------------------------------
+// In-toto attestation payload
+// ---------------------------------------------------------------------------
+
+/// In-toto Statement v1 with an AgentShield predicate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttestationPayload {
+    #[serde(rename = "_type")]
+    pub attestation_type: String,
+    pub subject: Vec<AttestationSubject>,
+    #[serde(rename = "predicateType")]
+    pub predicate_type: String,
+    pub predicate: ScanAttestation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttestationSubject {
+    pub name: String,
+    pub digest: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanAttestation {
+    pub scanner: ScannerInfo,
+    pub findings: Vec<FindingSummary>,
+    pub suppressions: Vec<SuppressionSummary>,
+    pub capabilities: CapabilitySummary,
+    pub provenance: Option<ProvenanceSummary>,
+    pub egress_policy_hash: Option<String>,
+    pub scanned_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScannerInfo {
+    pub name: String,
+    pub version: String,
+    pub rule_count: usize,
+    pub rules_version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FindingSummary {
+    pub fingerprint: String,
+    pub rule_id: String,
+    pub severity: String,
+    pub confidence: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuppressionSummary {
+    pub fingerprint: String,
+    pub reason: String,
+    pub expires: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilitySummary {
+    pub declared: Vec<String>,
+    pub observed: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProvenanceSummary {
+    pub author: Option<String>,
+    pub repository: Option<String>,
+    pub license: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// DSSE PAE (Pre-Authentication Encoding)
+// ---------------------------------------------------------------------------
+
+/// DSSE v1 Pre-Authentication Encoding over the raw payload bytes:
+///
+/// ```text
+/// "DSSEv1" SP LEN(type) SP type SP LEN(body) SP body
+/// ```
+///
+/// where `LEN` is the ASCII decimal byte length. This is what is signed; the
+/// envelope's `payload` field carries `base64(body)`.
+pub fn pae(payload_type: &str, body: &[u8]) -> Vec<u8> {
+    let mut encoded = format!(
+        "DSSEv1 {} {} {} ",
+        payload_type.len(),
+        payload_type,
+        body.len()
+    )
+    .into_bytes();
+    encoded.extend_from_slice(body);
+    encoded
+}
+
+/// The non-standard PAE used by AgentShield 1.0.2 and earlier, computed over
+/// the base64 payload text. Only used to verify legacy envelopes.
+fn legacy_pae(payload_type: &str, payload_b64: &str) -> Vec<u8> {
+    format!(
+        "DSSEv1 {} {} {} {}",
+        payload_type.len(),
+        payload_type,
+        payload_b64.len(),
+        payload_b64
+    )
+    .into_bytes()
+}
+
+// ---------------------------------------------------------------------------
+// DsseEnvelope implementation
+// ---------------------------------------------------------------------------
+
+impl DsseEnvelope {
+    /// Create an unsigned envelope from an attestation payload.
+    pub fn new(payload: &AttestationPayload) -> Result<Self, crate::error::ShieldError> {
+        let payload_json = serde_json::to_string(payload)?;
+        let payload_b64 = BASE64.encode(payload_json.as_bytes());
+
+        Ok(Self {
+            payload_type: PAYLOAD_TYPE.to_string(),
+            payload: payload_b64,
+            signatures: vec![],
+        })
+    }
+
+    /// Sign the envelope with a 32-byte Ed25519 private key.
+    ///
+    /// Appends a new signature entry; can be called multiple times for
+    /// multi-party signing.
+    pub fn sign(&mut self, private_key_bytes: &[u8]) -> Result<(), crate::error::ShieldError> {
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let key_array: [u8; 32] = private_key_bytes.try_into().map_err(|_| {
+            crate::error::ShieldError::Internal("Invalid key length: expected 32 bytes".to_string())
+        })?;
+        let signing_key = SigningKey::from_bytes(&key_array);
+
+        let body = self.payload_bytes()?;
+        let signature = signing_key.sign(&pae(&self.payload_type, &body));
+        let public_key = signing_key.verifying_key();
+
+        self.signatures.push(DsseSignature {
+            keyid: hex::encode(public_key.as_bytes()),
+            sig: BASE64.encode(signature.to_bytes()),
+        });
+
+        Ok(())
+    }
+
+    /// Verify all signatures in the envelope.
+    ///
+    /// Returns `Ok(false)` if the envelope is unsigned and `Ok(true)` if every
+    /// signature verifies (including legacy envelopes, see
+    /// [`DsseEnvelope::verify_detailed`]). Returns `Err` if any signature is
+    /// invalid.
+    pub fn verify(&self) -> Result<bool, crate::error::ShieldError> {
+        Ok(self.verify_detailed()? != DsseVerification::Unsigned)
+    }
+
+    /// Verify all signatures and report which PAE encoding they used.
+    ///
+    /// Signatures are checked over the standard DSSE PAE of the raw payload.
+    /// Only when the payload's `predicateType` is [`LEGACY_PREDICATE_TYPE`] is
+    /// the legacy encoding accepted as a fallback.
+    pub fn verify_detailed(&self) -> Result<DsseVerification, crate::error::ShieldError> {
+        use crate::error::ShieldError;
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+        if self.signatures.is_empty() {
+            return Ok(DsseVerification::Unsigned);
+        }
+
+        let body = self.payload_bytes()?;
+        let standard = pae(&self.payload_type, &body);
+        let legacy_allowed = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|value| value.get("predicateType")?.as_str().map(str::to_owned))
+            .is_some_and(|predicate| predicate == LEGACY_PREDICATE_TYPE);
+        let mut used_legacy = false;
+
+        for sig in &self.signatures {
+            let key_bytes = hex::decode(&sig.keyid)
+                .map_err(|e| ShieldError::Internal(format!("Invalid keyid hex: {}", e)))?;
+            let key_array: [u8; 32] = key_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| ShieldError::Internal("Invalid key length".to_string()))?;
+            let verifying_key = VerifyingKey::from_bytes(&key_array)
+                .map_err(|e| ShieldError::Internal(format!("Invalid verifying key: {}", e)))?;
+
+            let sig_bytes = BASE64
+                .decode(&sig.sig)
+                .map_err(|e| ShieldError::Internal(format!("Invalid signature base64: {}", e)))?;
+            let sig_array: [u8; 64] = sig_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| ShieldError::Internal("Invalid signature length".to_string()))?;
+            let signature = Signature::from_bytes(&sig_array);
+
+            match verifying_key.verify(&standard, &signature) {
+                Ok(()) => {}
+                Err(error) => {
+                    let legacy_ok = legacy_allowed
+                        && verifying_key
+                            .verify(&legacy_pae(&self.payload_type, &self.payload), &signature)
+                            .is_ok();
+                    if !legacy_ok {
+                        return Err(ShieldError::Internal(format!(
+                            "Signature verification failed: {}",
+                            error
+                        )));
+                    }
+                    used_legacy = true;
+                }
+            }
+        }
+
+        Ok(if used_legacy {
+            DsseVerification::VerifiedLegacy
+        } else {
+            DsseVerification::Verified
+        })
+    }
+
+    fn payload_bytes(&self) -> Result<Vec<u8>, crate::error::ShieldError> {
+        BASE64.decode(&self.payload).map_err(|e| {
+            crate::error::ShieldError::Internal(format!("Invalid payload base64: {}", e))
+        })
+    }
+
+    /// Decode and deserialize the payload from the envelope.
+    pub fn decode_payload(&self) -> Result<AttestationPayload, crate::error::ShieldError> {
+        let payload_bytes = self.payload_bytes()?;
+        let payload: AttestationPayload = serde_json::from_slice(&payload_bytes)?;
+        Ok(payload)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Attestation builder
+// ---------------------------------------------------------------------------
+
+/// Build an in-toto attestation payload from scan results.
+///
+/// Finding fingerprints are computed over `findings`; to attest a filtered
+/// report, use [`build_attestation_with_fingerprints`] with the report's
+/// fingerprints.
+pub fn build_attestation(
+    scan_root: &Path,
+    findings: &[Finding],
+    suppressions: &[Suppression],
+    targets: &[ScanTarget],
+    egress_policy_hash: Option<String>,
+) -> AttestationPayload {
+    let fingerprints = crate::rules::fingerprint::compute_fingerprints(findings, scan_root);
+    build_attestation_with_fingerprints(
+        scan_root,
+        findings,
+        &fingerprints,
+        suppressions,
+        targets,
+        egress_policy_hash,
+    )
+}
+
+/// Build an in-toto attestation payload with precomputed finding fingerprints
+/// aligned with `findings` (for example [`crate::ScanReport::fingerprints`]).
+///
+/// The subject is named after the scan directory; its `sha256` digest is the
+/// content-bound source manifest digest (see [`crate::certify::subject`]).
+pub fn build_attestation_with_fingerprints(
+    scan_root: &Path,
+    findings: &[Finding],
+    fingerprints: &[String],
+    suppressions: &[Suppression],
+    targets: &[ScanTarget],
+    egress_policy_hash: Option<String>,
+) -> AttestationPayload {
+    let dir_name = scan_root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let subject = AttestationSubject {
+        name: dir_name,
+        digest: [(
+            "sha256".to_string(),
+            crate::certify::subject::source_manifest_digest(scan_root, targets),
+        )]
+        .into_iter()
+        .collect(),
+    };
+
+    // Summarize findings
+    let recomputed;
+    let fingerprints = if fingerprints.len() == findings.len() {
+        fingerprints
+    } else {
+        recomputed = crate::rules::fingerprint::compute_fingerprints(findings, scan_root);
+        &recomputed
+    };
+    let finding_summaries: Vec<FindingSummary> = findings
+        .iter()
+        .zip(fingerprints)
+        .map(|(f, fingerprint)| FindingSummary {
+            fingerprint: fingerprint.clone(),
+            rule_id: f.rule_id.clone(),
+            severity: format!("{:?}", f.severity),
+            confidence: format!("{:?}", f.confidence),
+        })
+        .collect();
+
+    // Summarize suppressions
+    let suppression_summaries: Vec<SuppressionSummary> = suppressions
+        .iter()
+        .map(|s| SuppressionSummary {
+            fingerprint: s.fingerprint.clone(),
+            reason: s.reason.clone(),
+            expires: s.expires.clone(),
+        })
+        .collect();
+
+    // Build capability summary from all targets
+    let mut declared = Vec::new();
+    let mut observed = Vec::new();
+    for target in targets {
+        for tool in &target.tools {
+            for perm in &tool.declared_permissions {
+                declared.push(format!("{:?}", perm.permission_type));
+            }
+        }
+        if !target.execution.commands.is_empty() {
+            observed.push("ProcessExec".to_string());
+        }
+        if !target.execution.network_operations.is_empty() {
+            observed.push("NetworkAccess".to_string());
+        }
+        if !target.execution.file_operations.is_empty() {
+            observed.push("FileAccess".to_string());
+        }
+        if !target.execution.dynamic_exec.is_empty() {
+            observed.push("DynamicExec".to_string());
+        }
+    }
+    declared.sort();
+    declared.dedup();
+    observed.sort();
+    observed.dedup();
+
+    // Provenance from first target
+    let provenance = targets.first().map(|t| ProvenanceSummary {
+        author: t.provenance.author.clone(),
+        repository: t.provenance.repository.clone(),
+        license: t.provenance.license.clone(),
+    });
+
+    // Scanner info
+    let rule_count = crate::rules::RuleEngine::new().list_scanner_rules().len();
+    let scanner = ScannerInfo {
+        name: "agentshield".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        rule_count,
+        rules_version: "v0.5".to_string(),
+    };
+
+    AttestationPayload {
+        attestation_type: "https://in-toto.io/Statement/v1".to_string(),
+        subject: vec![subject],
+        predicate_type: PREDICATE_TYPE.to_string(),
+        predicate: ScanAttestation {
+            scanner,
+            findings: finding_summaries,
+            suppressions: suppression_summaries,
+            capabilities: CapabilitySummary { declared, observed },
+            provenance,
+            egress_policy_hash,
+            scanned_at: chrono::Utc::now().to_rfc3339(),
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::SourceLocation;
+    use crate::rules::finding::{AttackCategory, Confidence, Evidence, Severity};
+    use std::path::PathBuf;
+
+    /// Helper: build a minimal finding for tests.
+    fn make_test_finding(rule_id: &str, file: &str, evidence_desc: &str) -> Finding {
+        Finding {
+            rule_id: rule_id.to_string(),
+            rule_name: "Test Rule".to_string(),
+            severity: Severity::High,
+            confidence: Confidence::High,
+            attack_category: AttackCategory::CommandInjection,
+            message: "test finding".to_string(),
+            location: Some(SourceLocation {
+                file: PathBuf::from(file),
+                line: 10,
+                column: 0,
+                end_line: None,
+                end_column: None,
+            }),
+            evidence: vec![Evidence {
+                description: evidence_desc.to_string(),
+                location: None,
+                snippet: None,
+            }],
+            taint_path: None,
+            remediation: Some("Fix it".to_string()),
+            cwe_id: Some("CWE-78".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_attestation_payload_serialization() {
+        let scan_root = Path::new("/project");
+        let findings = vec![make_test_finding(
+            "SHIELD-001",
+            "/project/src/main.py",
+            "subprocess.run receives parameter",
+        )];
+        let suppressions = vec![Suppression {
+            fingerprint: "abc123".to_string(),
+            reason: "False positive".to_string(),
+            expires: Some("2099-12-31".to_string()),
+            created_at: None,
+        }];
+
+        let payload = build_attestation(scan_root, &findings, &suppressions, &[], None);
+
+        let json = serde_json::to_string_pretty(&payload).expect("serialize payload");
+
+        // Verify structure
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse JSON");
+        assert_eq!(
+            parsed["_type"].as_str().unwrap(),
+            "https://in-toto.io/Statement/v1"
+        );
+        assert_eq!(
+            parsed["predicateType"].as_str().unwrap(),
+            "https://agentshield.dev/attestation/v2"
+        );
+        assert_eq!(parsed["subject"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["predicate"]["findings"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            parsed["predicate"]["suppressions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            parsed["predicate"]["scanner"]["name"].as_str().unwrap(),
+            "agentshield"
+        );
+        assert!(parsed["predicate"]["scanned_at"].as_str().is_some());
+
+        // Finding summary has expected fields
+        let fs = &parsed["predicate"]["findings"][0];
+        assert_eq!(fs["rule_id"].as_str().unwrap(), "SHIELD-001");
+        assert!(fs["fingerprint"].as_str().is_some());
+    }
+
+    #[test]
+    fn test_unsigned_envelope() {
+        let scan_root = Path::new("/project");
+        let payload = build_attestation(scan_root, &[], &[], &[], None);
+        let envelope = DsseEnvelope::new(&payload).expect("create envelope");
+
+        assert_eq!(envelope.payload_type, "application/vnd.in-toto+json");
+        assert!(envelope.signatures.is_empty());
+
+        // Should serialize to valid JSON
+        let json = serde_json::to_string(&envelope).expect("serialize envelope");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse JSON");
+        assert_eq!(
+            parsed["payloadType"].as_str().unwrap(),
+            "application/vnd.in-toto+json"
+        );
+        assert!(parsed["signatures"].as_array().unwrap().is_empty());
+
+        // Verify returns false for unsigned
+        assert!(!envelope.verify().expect("verify unsigned"));
+    }
+
+    #[test]
+    fn test_sign_and_verify() {
+        let scan_root = Path::new("/project");
+        let findings = vec![make_test_finding(
+            "SHIELD-001",
+            "/project/src/main.py",
+            "subprocess.run receives parameter",
+        )];
+        let payload = build_attestation(scan_root, &findings, &[], &[], None);
+        let mut envelope = DsseEnvelope::new(&payload).expect("create envelope");
+
+        // Generate a deterministic test key
+        let private_key: [u8; 32] = [42u8; 32];
+        envelope.sign(&private_key).expect("sign envelope");
+
+        assert_eq!(envelope.signatures.len(), 1);
+        assert!(!envelope.signatures[0].keyid.is_empty());
+        assert!(!envelope.signatures[0].sig.is_empty());
+
+        // Verification should pass
+        assert!(envelope.verify().expect("verify signed"));
+
+        // Decoded payload should match original
+        let decoded = envelope.decode_payload().expect("decode payload");
+        assert_eq!(decoded.attestation_type, payload.attestation_type);
+        assert_eq!(decoded.predicate.findings.len(), 1);
+    }
+
+    #[test]
+    fn test_tampered_envelope_fails_verify() {
+        let scan_root = Path::new("/project");
+        let payload = build_attestation(scan_root, &[], &[], &[], None);
+        let mut envelope = DsseEnvelope::new(&payload).expect("create envelope");
+
+        let private_key: [u8; 32] = [42u8; 32];
+        envelope.sign(&private_key).expect("sign envelope");
+
+        // Tamper with the payload
+        let tampered_payload = build_attestation(scan_root, &[], &[], &[], Some("tampered".into()));
+        let tampered_json = serde_json::to_string(&tampered_payload).expect("serialize");
+        envelope.payload = BASE64.encode(tampered_json.as_bytes());
+
+        // Verification should fail
+        let result = envelope.verify();
+        assert!(
+            result.is_err(),
+            "Tampered envelope should fail verification"
+        );
+    }
+
+    #[test]
+    fn test_build_attestation_from_scan() {
+        let fixture = Path::new("tests/fixtures/mcp_servers/vuln_cmd_inject");
+        let opts = crate::ScanOptions::default();
+
+        let report = crate::scan(fixture, &opts).expect("scan fixture");
+
+        let payload = build_attestation(
+            &report.scan_root,
+            &report.findings,
+            &[],
+            &report.targets,
+            None,
+        );
+
+        // Should contain at least one finding (SHIELD-001)
+        assert!(
+            !payload.predicate.findings.is_empty(),
+            "Attestation should include findings from vuln_cmd_inject"
+        );
+
+        // At least one finding should be SHIELD-001
+        assert!(
+            payload
+                .predicate
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "SHIELD-001"),
+            "Expected SHIELD-001 in attestation findings"
+        );
+
+        // Scanner info should be populated
+        assert_eq!(payload.predicate.scanner.name, "agentshield");
+        assert!(payload.predicate.scanner.rule_count > 0);
+    }
+
+    fn fixed_payload() -> AttestationPayload {
+        let mut payload = build_attestation(Path::new("/project"), &[], &[], &[], None);
+        payload.predicate.scanned_at = "2026-01-01T00:00:00Z".into();
+        payload.predicate.scanner.version = "test".into();
+        payload
+    }
+
+    #[test]
+    fn pae_matches_the_dsse_spec_example() {
+        // From the DSSE protocol specification.
+        assert_eq!(
+            pae("http://example.com/HelloWorld", b"hello world"),
+            b"DSSEv1 29 http://example.com/HelloWorld 11 hello world".to_vec()
+        );
+    }
+
+    #[test]
+    fn envelope_carries_base64_of_raw_payload_and_signs_its_pae() {
+        use ed25519_dalek::{Signature, Signer, SigningKey, Verifier};
+
+        let payload = fixed_payload();
+        let raw = serde_json::to_vec(&payload).expect("serialize");
+        let mut envelope = DsseEnvelope::new(&payload).expect("envelope");
+        assert_eq!(BASE64.decode(&envelope.payload).expect("b64"), raw);
+
+        let key = [7u8; 32];
+        envelope.sign(&key).expect("sign");
+        let signing_key = SigningKey::from_bytes(&key);
+
+        // PAE byte layout over the raw payload bytes, not the base64 text.
+        let mut expected_pae = format!(
+            "DSSEv1 {} {} {} ",
+            PAYLOAD_TYPE.len(),
+            PAYLOAD_TYPE,
+            raw.len()
+        )
+        .into_bytes();
+        expected_pae.extend_from_slice(&raw);
+        assert_eq!(pae(&envelope.payload_type, &raw), expected_pae);
+
+        let expected_sig = signing_key.sign(&expected_pae);
+        assert_eq!(
+            envelope.signatures[0].sig,
+            BASE64.encode(expected_sig.to_bytes())
+        );
+        let sig_bytes: [u8; 64] = BASE64
+            .decode(&envelope.signatures[0].sig)
+            .expect("b64")
+            .try_into()
+            .expect("64 bytes");
+        signing_key
+            .verifying_key()
+            .verify(&expected_pae, &Signature::from_bytes(&sig_bytes))
+            .expect("standard DSSE verifier accepts the signature");
+        assert_eq!(
+            envelope.verify_detailed().expect("verify"),
+            DsseVerification::Verified
+        );
+    }
+
+    fn legacy_signed_envelope(predicate_type: &str) -> DsseEnvelope {
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let mut payload = fixed_payload();
+        payload.predicate_type = predicate_type.into();
+        let mut envelope = DsseEnvelope::new(&payload).expect("envelope");
+        let signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let legacy = format!(
+            "DSSEv1 {} {} {} {}",
+            envelope.payload_type.len(),
+            envelope.payload_type,
+            envelope.payload.len(),
+            envelope.payload
+        );
+        envelope.signatures.push(DsseSignature {
+            keyid: hex::encode(signing_key.verifying_key().as_bytes()),
+            sig: BASE64.encode(signing_key.sign(legacy.as_bytes()).to_bytes()),
+        });
+        envelope
+    }
+
+    #[test]
+    fn legacy_v1_envelopes_still_verify_and_are_reported_as_legacy() {
+        let envelope = legacy_signed_envelope(LEGACY_PREDICATE_TYPE);
+        assert_eq!(
+            envelope.verify_detailed().expect("legacy verifies"),
+            DsseVerification::VerifiedLegacy
+        );
+        assert!(envelope.verify().expect("verify"));
+    }
+
+    #[test]
+    fn legacy_encoding_is_rejected_for_v2_predicates() {
+        let envelope = legacy_signed_envelope(PREDICATE_TYPE);
+        let error = envelope.verify().expect_err("must not verify");
+        assert!(error.to_string().contains("verification failed"), "{error}");
+    }
+
+    #[test]
+    fn new_attestations_use_the_v2_predicate_type() {
+        assert_eq!(fixed_payload().predicate_type, PREDICATE_TYPE);
+        assert_eq!(PREDICATE_TYPE, "https://agentshield.dev/attestation/v2");
+    }
+
+    fn copy_tree(src: &Path, dst: &Path) {
+        std::fs::create_dir_all(dst).expect("mkdir");
+        for entry in std::fs::read_dir(src).expect("read") {
+            let entry = entry.expect("entry");
+            let target = dst.join(entry.file_name());
+            if entry.file_type().expect("type").is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), target).expect("copy");
+            }
+        }
+    }
+
+    fn subject_digest_of(root: &Path) -> String {
+        let report = crate::scan(root, &crate::ScanOptions::default()).expect("scan");
+        let payload = build_attestation(
+            &report.scan_root,
+            &report.findings,
+            &[],
+            &report.targets,
+            None,
+        );
+        payload.subject[0].digest["sha256"].clone()
+    }
+
+    #[test]
+    fn subject_digest_binds_content_not_directory_name() {
+        let fixture = Path::new("tests/fixtures/mcp_servers/vuln_cmd_inject");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let first = tmp.path().join("first");
+        let renamed = tmp.path().join("completely-different-name");
+        copy_tree(fixture, &first);
+        copy_tree(fixture, &renamed);
+
+        let original = subject_digest_of(&first);
+        assert_eq!(
+            original,
+            subject_digest_of(&renamed),
+            "root name is not hashed"
+        );
+
+        let server = first.join("server.py");
+        let mut content = std::fs::read_to_string(&server).expect("read");
+        content.push_str("\n# changed\n");
+        std::fs::write(&server, content).expect("write");
+        assert_ne!(original, subject_digest_of(&first), "content is hashed");
+    }
+}

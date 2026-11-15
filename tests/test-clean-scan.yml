@@ -1,0 +1,47 @@
+name: Test clean scan with provided binary
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install fake agentshield
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake"
+          cp tests/fixtures/fake-agentshield.sh "$RUNNER_TEMP/fake/agentshield"
+          chmod +x "$RUNNER_TEMP/fake/agentshield"
+          echo clean > /tmp/fake-agentshield-mode
+          rm -f /tmp/fake-agentshield-args.log
+      # act resolves every remote action in the composite (including the skipped
+      # github/codeql-action/upload-sarif step) and that pinned ref cannot be
+      # resolved under act, so the composite is reported as failed even though
+      # all its shell steps succeed. Tolerate that and assert on the outputs.
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          binary-path: ${{ runner.temp }}/fake/agentshield
+          upload-sarif: 'false'
+      - name: Assert outputs
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          EXIT_CODE: ${{ steps.action.outputs.exit-code }}
+          COUNT: ${{ steps.action.outputs.finding-count }}
+          SARIF: ${{ steps.action.outputs.sarif-file }}
+        run: |
+          echo "outcome: $OUTCOME exit-code: $EXIT_CODE count: $COUNT sarif: $SARIF"
+          case "$OUTCOME" in
+            success|failure) ;;
+            *) echo "FAIL: unexpected outcome '$OUTCOME'"; exit 1 ;;
+          esac
+          [ "$EXIT_CODE" = "0" ] || { echo "FAIL: exit-code"; exit 1; }
+          [ "$COUNT" = "0" ] || { echo "FAIL: finding-count"; exit 1; }
+          [ -n "$SARIF" ] && [ -f "$SARIF" ] || { echo "FAIL: sarif file missing"; exit 1; }
+          ARGS="$(cat /tmp/fake-agentshield-args.log)"
+          echo "args: $ARGS"
+          echo "$ARGS" | grep -q -- "scan \. --fail-on high" || { echo "FAIL: default path/fail-on"; exit 1; }
+          echo "$ARGS" | grep -q -- "--format sarif --output" || { echo "FAIL: sarif format"; exit 1; }
+          echo "$ARGS" | grep -q -- "--trust-target-config" || { echo "FAIL: trust flag"; exit 1; }
+          if echo "$ARGS" | grep -q -- "--ignore-tests"; then echo "FAIL: unexpected --ignore-tests"; exit 1; fi
+          echo "PASS"
